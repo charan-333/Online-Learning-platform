@@ -12,7 +12,8 @@ const schema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
-  APP_URL: z.string().default('http://localhost:5173'),
+  // Public URL used in password-reset links. Render provides RENDER_EXTERNAL_URL automatically.
+  APP_URL: z.string().default(process.env.RENDER_EXTERNAL_URL ?? 'http://localhost:5173'),
   // AI tutor provider. 'none' keeps the tutor in grounded offline mode.
   AI_PROVIDER: z.enum(['none', 'anthropic']).default('none'),
   ANTHROPIC_API_KEY: z.string().optional(),

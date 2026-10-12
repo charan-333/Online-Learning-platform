@@ -8,7 +8,7 @@ import { config, isTest } from './config.js';
 import { pool } from './db/pool.js';
 import { csrfProtection, loadUser, requireAdmin, requireAuth } from './lib/auth.js';
 import { errorHandler } from './lib/errors.js';
-import { logger } from './lib/logger.js';
+import { logger, redactUrl } from './lib/logger.js';
 import { adminRouter, UPLOAD_DIR } from './modules/admin/routes.js';
 import { analyticsRouter } from './modules/analytics/routes.js';
 import { authRouter } from './modules/auth/routes.js';
@@ -31,7 +31,16 @@ export function createApp() {
   app.use(cors({ origin: config.CORS_ORIGIN.split(',').map((s) => s.trim()), credentials: true }));
   app.use(express.json({ limit: '5mb' }));
   app.use(cookieParser());
-  if (!isTest) app.use(pinoHttp({ logger, autoLogging: { ignore: (req) => req.url === '/api/health' } }));
+  if (!isTest) {
+    app.use(
+      pinoHttp({
+        logger,
+        autoLogging: { ignore: (req) => req.url === '/api/health' },
+        // The reset page URL carries a one-time token; never write it to the log.
+        serializers: { req: (req) => ({ id: req.id, method: req.method, url: redactUrl(req.url ?? '') }) },
+      }),
+    );
+  }
   app.use(
     '/api',
     rateLimit({

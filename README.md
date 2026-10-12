@@ -63,6 +63,10 @@ cd server && NODE_ENV=production COOKIE_SECURE=true npm start   # serves API and
 
 Run behind HTTPS. Set `CORS_ORIGIN` and `APP_URL` to the public origin.
 
+### Deploy
+
+A `Dockerfile` and a Render Blueprint (`render.yaml`) are included. See [docs/DEPLOY.md](docs/DEPLOY.md).
+
 ## Tests
 
 ```bash
