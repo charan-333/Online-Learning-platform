@@ -43,7 +43,7 @@ createdb -O cat100 cat100_e2e   # used by browser tests
 # 2. configuration
 cp .env.example server/.env     # edit if your database URL differs
 
-# 3. install, migrate, seed
+# 3. install, then migrate and seed (the seed script runs migrations first)
 npm install
 SEED_ADMIN_EMAIL=you@example.com SEED_ADMIN_PASSWORD='a long admin password' npm run db:seed
 
@@ -68,7 +68,7 @@ Run behind HTTPS. Set `CORS_ORIGIN` and `APP_URL` to the public origin.
 ```bash
 npm test -w server        # 124 unit + API integration tests; resets cat100_test each run
 npm test -w web           # markdown/KaTeX unit tests
-npm run build -w web && npm run e2e -w web   # Playwright; resets cat100_e2e and starts its own server on :4100
+npm run e2e               # builds web, then Playwright; resets cat100_e2e and starts its own server on :4100
 ```
 
 Playwright uses `CHROMIUM_PATH` if set, else `/opt/pw-browsers/chromium` if present, else its own
