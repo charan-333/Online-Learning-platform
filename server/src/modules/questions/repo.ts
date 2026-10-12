@@ -1,5 +1,5 @@
 import { many, one } from '../../db/pool.js';
-import { PROVENANCE_SQL } from '../../domain/provenance.js';
+import { GROUP_PROVENANCE_SQL, PROVENANCE_SQL } from '../../domain/provenance.js';
 
 /** Public view of a question: never includes the answer or solution. */
 export async function loadQuestionPublic(id: string, userId: string) {
@@ -25,11 +25,11 @@ export async function loadQuestionPublic(id: string, userId: string) {
   const tags = await many('SELECT t.name FROM question_tags qt JOIN tags t ON t.id = qt.tag_id WHERE qt.question_id = $1', [id]);
   let group: any = null;
   if (q.passage_id) {
-    const p = await one('SELECT id, external_id, title, domain, difficulty, body_md, word_count, origin, exam_year, exam_slot FROM passages WHERE id = $1', [q.passage_id]);
+    const p = await one(`SELECT g.id, g.external_id, g.title, g.domain, g.difficulty, g.body_md, g.word_count, g.origin, g.exam_year, g.exam_slot, ${GROUP_PROVENANCE_SQL} AS provenance FROM passages g WHERE g.id = $1`, [q.passage_id]);
     const siblings = await many("SELECT id, position_in_group FROM questions WHERE passage_id = $1 AND status = 'published' ORDER BY position_in_group, external_id", [q.passage_id]);
     group = { kind: 'passage', ...p, questionIds: siblings.map((s) => s.id) };
   } else if (q.dilr_set_id) {
-    const s = await one('SELECT id, external_id, title, set_type, difficulty, body_md, origin, exam_year, exam_slot, estimated_time_sec FROM dilr_sets WHERE id = $1', [q.dilr_set_id]);
+    const s = await one(`SELECT g.id, g.external_id, g.title, g.set_type, g.difficulty, g.body_md, g.origin, g.exam_year, g.exam_slot, g.estimated_time_sec, ${GROUP_PROVENANCE_SQL} AS provenance FROM dilr_sets g WHERE g.id = $1`, [q.dilr_set_id]);
     const siblings = await many("SELECT id FROM questions WHERE dilr_set_id = $1 AND status = 'published' ORDER BY position_in_group, external_id", [q.dilr_set_id]);
     group = { kind: 'dilr_set', ...s, questionIds: siblings.map((x) => x.id) };
   }

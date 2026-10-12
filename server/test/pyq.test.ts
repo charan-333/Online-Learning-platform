@@ -269,6 +269,13 @@ describe('authentic PYQ ingestion and review', () => {
     const setId = await groupId('dilr_sets', 'fx-pyq-s1');
     expect((await admin.post(`/api/admin/review/groups/dilr_set/${setId}/approve`, CONFIRM)).body.approved).toBe(1);
     expect(await row('fx-pyq-d1')).toMatchObject({ status: 'published', review_status: 'approved' });
+
+    // Same text, different cited source: the set and its question go back to review.
+    const moved = JSONL.replace('Fixture DILR set 1', 'Fixture DILR set 2');
+    expect((await admin.post('/api/admin/questions/import-file', { format: 'jsonl', content: moved, filename: 'fixture.jsonl' })).status).toBe(201);
+    expect((await query('SELECT source_verification FROM dilr_sets WHERE id = $1', [setId])).rows[0].source_verification).toBe('unverified');
+    expect(await row('fx-pyq-d1')).toMatchObject({ status: 'unpublished', review_status: 'pending' });
+    expect((await learner.get(`/api/dilr-sets/${setId}`)).status).toBe(404);
   });
 
   it('rejects a submission only with a reason and keeps it hidden', async () => {

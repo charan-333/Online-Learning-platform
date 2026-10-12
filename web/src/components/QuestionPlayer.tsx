@@ -137,7 +137,7 @@ export function QuestionPlayer({ questionId, context = 'practice', contextId, ti
           </Link>
           <DifficultyBadge d={d.difficulty} />
           <Badge tone="outline">{d.question_type === 'TITA' ? 'TITA (type in answer)' : 'MCQ'}</Badge>
-          <OriginBadge origin={d.origin} year={d.exam_year} slot={d.exam_slot} verification={d.source_verification} />
+          <OriginBadge provenance={d.provenance} origin={d.origin} year={d.exam_year} slot={d.exam_slot} number={d.question_number} />
           {d.solution_verification !== 'verified' && <Badge tone="warn">Solution not yet verified</Badge>}
         </div>
         <div className="row">
@@ -259,7 +259,7 @@ export function QuestionPlayer({ questionId, context = 'practice', contextId, ti
         <div className="card sticky">
           <div className="row-between">
             <h3>{d.group.title}</h3>
-            <OriginBadge origin={d.group.origin} year={d.group.exam_year} slot={d.group.exam_slot} />
+            <OriginBadge provenance={d.group.provenance} origin={d.group.origin} year={d.group.exam_year} slot={d.group.exam_slot} />
           </div>
           <div className="passage-text">
             <Markdown text={d.group.body_md} />

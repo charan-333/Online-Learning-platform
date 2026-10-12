@@ -45,7 +45,10 @@ export async function requestPasswordReset(email: string): Promise<'no_account' 
     },
     { purpose: 'password_reset', userId: user.id },
   );
-  return result.status === 'sent' ? 'sent' : 'failed';
+  if (result.status === 'sent') return 'sent';
+  // Nobody received this link, so it must never work.
+  await query('UPDATE password_reset_tokens SET revoked_at = now() WHERE token_hash = $1', [sha256(token)]);
+  return 'failed';
 }
 
 /** Consumes a token atomically: it can succeed once, before it expires, and only if not revoked. */

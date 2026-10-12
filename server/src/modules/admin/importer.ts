@@ -54,6 +54,16 @@ async function snapshotGroup(c: pg.PoolClient, type: 'passage' | 'dilr_set', row
   await query('INSERT INTO group_versions(group_type, group_id, snapshot, changed_by) VALUES ($1,$2,$3,$4)', [type, row.id, row, actorId], c);
 }
 
+/** True when a re-import changes what a passage or set says or where it is said to come from. */
+const groupChanged = (prev: any, g: PassageItem | SetItem) =>
+  prev.body_md !== g.body ||
+  prev.title !== g.title ||
+  prev.origin !== g.origin ||
+  prev.exam_year !== (g.examYear ?? null) ||
+  prev.exam_slot !== (g.examSlot ?? null) ||
+  prev.source_name !== (g.source?.name ?? '') ||
+  prev.source_reference !== (g.source?.reference ?? '');
+
 /** A changed PYQ passage or set sends its questions back to review: learners must not see unreviewed text. */
 async function requeueGroupQuestions(c: pg.PoolClient, column: 'passage_id' | 'dilr_set_id', groupId: string, actorId: string | null) {
   const qs = await many(`SELECT id FROM questions WHERE ${column} = $1 AND origin = 'authentic_pyq' AND review_status <> 'pending'`, [groupId], c);
@@ -82,6 +92,8 @@ async function upsertPassage(c: pg.PoolClient, p: PassageItem, actorId: string |
        origin=EXCLUDED.origin, exam_year=EXCLUDED.exam_year, exam_slot=EXCLUDED.exam_slot, word_count=EXCLUDED.word_count,
        source_name=EXCLUDED.source_name, source_reference=EXCLUDED.source_reference, source_url=EXCLUDED.source_url,
        source_verification = CASE WHEN passages.body_md = EXCLUDED.body_md AND passages.title = EXCLUDED.title AND passages.origin = EXCLUDED.origin
+                                   AND passages.exam_year IS NOT DISTINCT FROM EXCLUDED.exam_year AND passages.exam_slot IS NOT DISTINCT FROM EXCLUDED.exam_slot
+                                   AND passages.source_name = EXCLUDED.source_name AND passages.source_reference = EXCLUDED.source_reference
                                   THEN passages.source_verification ELSE EXCLUDED.source_verification END,
        updated_at = now()
      RETURNING id, source_verification`,
@@ -89,7 +101,7 @@ async function upsertPassage(c: pg.PoolClient, p: PassageItem, actorId: string |
      p.source?.name ?? '', p.source?.reference ?? '', p.source?.url ?? null, groupVerification(p.origin)],
     c,
   );
-  if (prev && (prev.body_md !== p.body || prev.title !== p.title)) await requeueGroupQuestions(c, 'passage_id', r!.id, actorId);
+  if (prev && groupChanged(prev, p)) await requeueGroupQuestions(c, 'passage_id', r!.id, actorId);
   return r!.id as string;
 }
 
@@ -105,6 +117,8 @@ async function upsertSet(c: pg.PoolClient, s: SetItem, actorId: string | null) {
        exam_year=EXCLUDED.exam_year, exam_slot=EXCLUDED.exam_slot, estimated_time_sec=EXCLUDED.estimated_time_sec,
        source_name=EXCLUDED.source_name, source_reference=EXCLUDED.source_reference, source_url=EXCLUDED.source_url,
        source_verification = CASE WHEN dilr_sets.body_md = EXCLUDED.body_md AND dilr_sets.title = EXCLUDED.title AND dilr_sets.origin = EXCLUDED.origin
+                                   AND dilr_sets.exam_year IS NOT DISTINCT FROM EXCLUDED.exam_year AND dilr_sets.exam_slot IS NOT DISTINCT FROM EXCLUDED.exam_slot
+                                   AND dilr_sets.source_name = EXCLUDED.source_name AND dilr_sets.source_reference = EXCLUDED.source_reference
                                   THEN dilr_sets.source_verification ELSE EXCLUDED.source_verification END,
        updated_at = now()
      RETURNING id`,
@@ -112,7 +126,7 @@ async function upsertSet(c: pg.PoolClient, s: SetItem, actorId: string | null) {
      s.source?.name ?? '', s.source?.reference ?? '', s.source?.url ?? null, groupVerification(s.origin)],
     c,
   );
-  if (prev && (prev.body_md !== s.body || prev.title !== s.title)) await requeueGroupQuestions(c, 'dilr_set_id', r!.id, actorId);
+  if (prev && groupChanged(prev, s)) await requeueGroupQuestions(c, 'dilr_set_id', r!.id, actorId);
   return r!.id as string;
 }
 

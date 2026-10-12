@@ -10,7 +10,7 @@ import { badRequest, notFound } from '../../lib/errors.js';
 import { pagination, parseBody, parseQuery, uuidParam } from '../../lib/validate.js';
 import { getEmailProvider, emailStatus, sendMail } from '../../lib/mailer.js';
 import { activate, addSource, createConfigVersion, listConfigs, loadConfig, PATTERN_FIELD_KEYS, removeSource, setFieldStatus, updateDraft } from '../../services/examConfigs.js';
-import { parseImportFile } from './importFormats.js';
+import { CSV_COLUMNS, parseImportFile } from './importFormats.js';
 import { runImport, snapshotQuestion } from './importer.js';
 import { DIFFICULTIES } from './importSchema.js';
 import { approveGroup, approveQuestion, questionChecks, rejectQuestions, reviewQueue } from './review.js';
@@ -56,6 +56,11 @@ adminRouter.post('/questions/import-file', async (req, res) => {
     parseIssues: parsed.issues,
   });
   res.status(b.dryRun ? 200 : 201).json(job);
+});
+
+/** Header-only CSV with every column the importer understands. */
+adminRouter.get('/import-template.csv', (_req, res) => {
+  res.type('text/csv').attachment('cat100-import-template.csv').send(`${CSV_COLUMNS.join(',')}\r\n`);
 });
 
 adminRouter.get('/import-jobs', async (_req, res) => {

@@ -1,5 +1,6 @@
+import fs from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { parseCsv, parseCsvRows, parseJson, parseJsonl } from '../src/modules/admin/importFormats.js';
+import { CSV_COLUMNS, parseCsv, parseCsvRows, parseJson, parseJsonl } from '../src/modules/admin/importFormats.js';
 import { answerMatchesKey, jaccard, shingles, validateItems, type ExistingContent } from '../src/modules/admin/validateImport.js';
 
 // Test fixtures only: invented items that never reach the database, labelled as such.
@@ -51,6 +52,12 @@ describe('CSV parsing', () => {
       solution: { learn: 'Fixture working', hints: ['first', 'second'], verification: 'Fixture check', distractors: { A: 'Not supported by the passage' } },
       tags: ['rc', 'fixture'],
     });
+  });
+
+  it('ships a template whose header matches the columns the importer accepts', () => {
+    const template = fs.readFileSync(new URL('../../docs/pyq-import-template.csv', import.meta.url), 'utf8');
+    expect(template.trim().split(',')).toEqual([...CSV_COLUMNS]);
+    expect(parseCsv(template).issues).toEqual([]);
   });
 
   it('rejects unknown columns, a missing record_type column and rows wider than the header', () => {

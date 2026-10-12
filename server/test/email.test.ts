@@ -177,6 +177,9 @@ describe('password reset over SMTP', () => {
       expect(d[0].status).toBe('failed');
       expect(d[0].error).toMatch(/550/);
       expect(d[0].error).not.toMatch(/token=|https?:/);
+      const tokens = (await query('SELECT revoked_at FROM password_reset_tokens WHERE user_id = $1', [c.id])).rows;
+      expect(tokens).toHaveLength(1);
+      expect(tokens[0].revoked_at).not.toBeNull(); // an undelivered link never works
     } finally {
       smtp.state.refuseRecipients = false;
     }

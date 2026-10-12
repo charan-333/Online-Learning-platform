@@ -5,6 +5,7 @@ import { ERROR_CATEGORIES, ERROR_GUIDE } from '../../domain/errors.js';
 import { clearSessionCookies, userId, verifyPassword } from '../../lib/auth.js';
 import { badRequest, notFound } from '../../lib/errors.js';
 import { dateStr, pagination, parseBody, parseQuery, uuidParam } from '../../lib/validate.js';
+import { listConfigs } from '../../services/examConfigs.js';
 import { recommendTopics } from '../../services/recommend.js';
 
 export const learnerRouter = Router();
@@ -54,10 +55,16 @@ learnerRouter.patch('/profile', async (req, res) => {
   res.json(row);
 });
 
+/** Every recorded pattern version, the active one first, with its verification status and sources. */
 learnerRouter.get('/exam-configs', async (_req, res) => {
-  const cfgs = await many('SELECT * FROM exam_configs ORDER BY year DESC');
-  const secs = await many('SELECT * FROM exam_config_sections ORDER BY position');
-  res.json({ items: cfgs.map((c) => ({ ...c, sections: secs.filter((s) => s.exam_config_id === c.id) })) });
+  const cfgs = await listConfigs();
+  const items = cfgs
+    .sort((a, b) => Number(b.is_active) - Number(a.is_active))
+    .map(({ id, year, version, name, is_active, total_duration_min, sectional_lock, status, label, fields, sections, sources }) => ({
+      id, year, version, name, is_active, total_duration_min, sectional_lock, status, label, fields, sections,
+      sources: sources.map((s: any) => ({ kind: s.kind, title: s.title, publisher: s.publisher, url: s.url, accessed_on: s.accessed_on, supports: s.supports })),
+    }));
+  res.json({ items });
 });
 
 // ------------------------------------------------------------------ recommendations

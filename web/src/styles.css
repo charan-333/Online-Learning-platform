@@ -240,3 +240,13 @@ mark.hl { background: #ffe58a; color: inherit; }
 details > summary { cursor: pointer; font-weight: 600; }
 @media print { .sidebar, .topbar, .no-print { display: none !important; } .app { display: block; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* PYQ review queue */
+.checks { list-style: none; padding: 0; margin: 4px 0 8px; }
+.checks li { padding: 2px 0; }
+.checks li.ok span[aria-hidden] { color: var(--good); }
+.checks li.fail { color: var(--bad); }
+.checks li.warn { color: var(--warn); }
+.review-q { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 8px; }
+.review-q p { margin: 4px 0; overflow-wrap: anywhere; }
+.stack .check { display: flex; align-items: flex-start; margin: 4px 0; }

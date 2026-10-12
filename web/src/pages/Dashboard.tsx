@@ -31,7 +31,7 @@ export function Dashboard() {
       />
       {o.questionBank && Number(o.questionBank.pyq_total ?? 0) === 0 && (
         <div className="alert alert-warn">
-          No authentic CAT PYQs have been imported yet. Practice currently uses CAT 100 original questions, each labelled as such. An admin can import verified PYQs from the content console.
+          No verified CAT PYQs are available yet. Practice uses questions written for CAT 100, each labelled as such. Verified PYQs will be picked first once an editor imports and approves them.
         </div>
       )}
       <div className="grid grid-4 mb">

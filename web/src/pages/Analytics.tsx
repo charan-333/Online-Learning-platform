@@ -83,7 +83,7 @@ export function Analytics() {
                 Revision: {d.revision.due} due of {d.revision.active} active · Errors: {d.errors.open} open, {d.errors.resolved} resolved, {d.errors.recurred} recurred after review
               </p>
               <p className="small">
-                Question bank coverage: {d.questionBank.all_done} of {d.questionBank.all_total} attempted · authentic PYQs {d.questionBank.pyq_done} of {d.questionBank.pyq_total} ({d.questionBank.pyq_verified} with verified source)
+                Question bank coverage: {d.questionBank.all_done} of {d.questionBank.all_total} attempted · verified CAT PYQs {d.questionBank.pyq_done} of {d.questionBank.pyq_total}
               </p>
             </Card>
           </div>

@@ -21,7 +21,7 @@ export function ReadingList() {
               <Link to={`/reading/${p.id}`}>
                 <strong>{p.title}</strong>
               </Link>
-              <OriginBadge origin={p.origin} year={p.exam_year} slot={p.exam_slot} />
+              <OriginBadge provenance={p.provenance} origin={p.origin} year={p.exam_year} slot={p.exam_slot} />
             </div>
             <div className="row small mt">
               <Badge tone="outline">{p.domain}</Badge>
@@ -51,7 +51,7 @@ export function DilrList() {
               <Link to={`/dilr/${s.id}`}>
                 <strong>{s.title}</strong>
               </Link>
-              <OriginBadge origin={s.origin} year={s.exam_year} slot={s.exam_slot} />
+              <OriginBadge provenance={s.provenance} origin={s.origin} year={s.exam_year} slot={s.exam_slot} />
             </div>
             <div className="row small mt">
               <Badge tone="outline">{s.set_type}</Badge>
@@ -136,7 +136,7 @@ export function PassagePage() {
 
   return (
     <div>
-      <PageHeader title={d.title} subtitle={<span className="row"><Badge tone="outline">{d.domain}</Badge><OriginBadge origin={d.origin} year={d.exam_year} slot={d.exam_slot} /><span className="small">{d.word_count} words · reading for {fmtSec(readingSec)}</span></span>} />
+      <PageHeader title={d.title} subtitle={<span className="row"><Badge tone="outline">{d.domain}</Badge><OriginBadge provenance={d.provenance} origin={d.origin} year={d.exam_year} slot={d.exam_slot} /><span className="small">{d.word_count} words · reading for {fmtSec(readingSec)}</span></span>} />
       <div className="split">
         <div className="card sticky">
           <div className="small muted mb">Select text to highlight or annotate it.</div>
@@ -323,7 +323,7 @@ export function DilrSetPage() {
   const workspace = d.notes.find((n: any) => n.kind === 'workspace');
   return (
     <div>
-      <PageHeader title={d.title} subtitle={<span className="row"><Badge tone="outline">{d.set_type}</Badge><DifficultyBadge d={d.difficulty} /><OriginBadge origin={d.origin} year={d.exam_year} slot={d.exam_slot} /><span className="small">Target {fmtSec(d.estimated_time_sec)}</span></span>} />
+      <PageHeader title={d.title} subtitle={<span className="row"><Badge tone="outline">{d.set_type}</Badge><DifficultyBadge d={d.difficulty} /><OriginBadge provenance={d.provenance} origin={d.origin} year={d.exam_year} slot={d.exam_slot} /><span className="small">Target {fmtSec(d.estimated_time_sec)}</span></span>} />
       <div className="split">
         <div className="sticky">
           <div className="card">

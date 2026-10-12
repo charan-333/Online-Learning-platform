@@ -28,3 +28,6 @@ services:
         sync: false
       - key: SEED_ADMIN_PASSWORD
         sync: false
+      # Password-reset email (docs/EMAIL.md). Add EMAIL_PROVIDER=smtp, EMAIL_FROM and the SMTP_*
+      # settings in the service's Environment tab once you have an SMTP provider. Until then
+      # reset emails are not sent, and Admin -> Email says so.
