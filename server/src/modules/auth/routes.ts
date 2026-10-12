@@ -3,10 +3,11 @@ import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { config } from '../../config.js';
 import { one, query } from '../../db/pool.js';
-import { clearSessionCookies, createSession, hashPassword, randomToken, requireAuth, sha256, verifyPassword } from '../../lib/auth.js';
-import { badRequest, conflict, HttpError } from '../../lib/errors.js';
-import { sendMail } from '../../lib/mailer.js';
+import { runInBackground } from '../../lib/background.js';
+import { clearSessionCookies, createSession, hashPassword, requireAuth, verifyPassword } from '../../lib/auth.js';
+import { conflict, HttpError } from '../../lib/errors.js';
 import { parseBody } from '../../lib/validate.js';
+import { notifyPasswordChanged, requestPasswordReset, resetPassword } from './passwordReset.js';
 import { createUser } from './service.js';
 
 export const authRouter = Router();
@@ -50,29 +51,30 @@ authRouter.post('/logout', requireAuth, async (req, res) => {
   res.status(204).end();
 });
 
-authRouter.post('/forgot-password', authLimiter, async (req, res) => {
+// Reset requests are limited per IP here and per account in requestPasswordReset.
+const forgotLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 5,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  skip: () => config.RATE_LIMIT_DISABLED,
+  message: { error: { code: 'rate_limited', message: 'Too many reset requests. Please wait a few minutes and try again.' } },
+});
+
+const RESET_REQUESTED = 'If an account exists for that email, a reset link has been sent.';
+
+authRouter.post('/forgot-password', forgotLimiter, async (req, res) => {
   const body = parseBody(z.object({ email }), req);
-  const user = await one('SELECT id, email FROM users WHERE email = $1', [body.email]);
-  if (user) {
-    const token = randomToken();
-    await query('INSERT INTO password_reset_tokens(user_id, token_hash, expires_at) VALUES ($1,$2, now() + interval \'1 hour\')', [user.id, sha256(token)]);
-    await sendMail({
-      to: user.email,
-      subject: 'Reset your CAT 100 password',
-      text: `Use this link within one hour to choose a new password: ${config.APP_URL}/reset-password?token=${token}`,
-    });
-  }
-  // Same response either way so the endpoint cannot be used to discover accounts.
-  res.json({ message: 'If an account exists for that email, a reset link has been sent.' });
+  // The lookup and email happen after the response, so the reply and its timing are the same
+  // whether or not the account exists.
+  runInBackground('password_reset_request', () => requestPasswordReset(body.email));
+  res.json({ message: RESET_REQUESTED });
 });
 
 authRouter.post('/reset-password', authLimiter, async (req, res) => {
   const body = parseBody(z.object({ token: z.string().min(10).max(200), password }), req);
-  const row = await one('SELECT id, user_id FROM password_reset_tokens WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()', [sha256(body.token)]);
-  if (!row) throw badRequest('This reset link is invalid or has expired');
-  await query('UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1', [row.user_id, await hashPassword(body.password)]);
-  await query('UPDATE password_reset_tokens SET used_at = now() WHERE id = $1', [row.id]);
-  await query('DELETE FROM sessions WHERE user_id = $1', [row.user_id]); // sign out everywhere
+  const user = await resetPassword(body.token, body.password);
+  runInBackground('password_changed_notice', () => notifyPasswordChanged(user));
   res.json({ message: 'Password updated. Please sign in.' });
 });
 

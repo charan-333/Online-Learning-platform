@@ -1,5 +1,6 @@
 import request from 'supertest';
 import { describe, expect, it } from 'vitest';
+import { flushBackground } from '../src/lib/background.js';
 import { outbox } from '../src/lib/mailer.js';
 import { query } from '../src/db/pool.js';
 import { app, correctAnswer, questionId, signUp } from './helpers.js';
@@ -47,6 +48,7 @@ describe('auth and security', () => {
     expect(unknown.status).toBe(200);
     const r = await request(app).post('/api/auth/forgot-password').send({ email: c.email });
     expect(r.body.message).toBe(unknown.body.message); // no account enumeration
+    await flushBackground(); // the email is sent after the response
     const mail = [...outbox].reverse().find((m) => m.to === c.email)!;
     const token = /token=([A-Za-z0-9_-]+)/.exec(mail.text)![1];
     const reset = await request(app).post('/api/auth/reset-password').send({ token, password: 'a brand new password' });

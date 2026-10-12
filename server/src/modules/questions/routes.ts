@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { many, one, query } from '../../db/pool.js';
 import { ERROR_CATEGORIES } from '../../domain/errors.js';
+import { PROVENANCE_FILTERS, PROVENANCE_SQL } from '../../domain/provenance.js';
 import { userId } from '../../lib/auth.js';
 import { forbidden, notFound } from '../../lib/errors.js';
 import { boolish, csv, pagination, parseBody, parseQuery, uuidParam } from '../../lib/validate.js';
@@ -21,6 +22,7 @@ const listQuery = pagination.extend({
   year: csv(z.coerce.number().int()),
   slot: csv(z.coerce.number().int()),
   sourceVerification: csv(z.enum(['verified', 'unverified', 'not_applicable'])),
+  provenance: csv(z.enum(['verified_pyq', 'unverified_historical', 'practice'])),
   attempted: boolish,
   result: z.enum(['correct', 'incorrect']).optional(),
   previouslyIncorrect: boolish,
@@ -54,6 +56,7 @@ questionsRouter.get('/', async (req, res) => {
   if (f.year) add('q.exam_year = ANY(?)', f.year);
   if (f.slot) add('q.exam_slot = ANY(?)', f.slot);
   if (f.sourceVerification) add('q.source_verification = ANY(?)', f.sourceVerification);
+  if (f.provenance) where.push(`(${f.provenance.map((p) => PROVENANCE_FILTERS[p]).join(' OR ')})`);
   if (f.attempted === true) where.push('st.attempts > 0');
   if (f.attempted === false) where.push('coalesce(st.attempts, 0) = 0');
   if (f.result === 'correct') where.push('st.last_correct IS TRUE');
@@ -77,7 +80,8 @@ questionsRouter.get('/', async (req, res) => {
              (array_agg(is_correct ORDER BY created_at DESC))[1] AS last_correct
         FROM question_attempts WHERE user_id = $1 GROUP BY question_id)
     SELECT q.id, q.external_id, q.section_id, q.topic_id, t.name AS topic_name, q.question_type, q.difficulty, left(q.stem_md, 220) AS stem_preview,
-           q.estimated_time_sec, q.origin, q.exam_year, q.exam_slot, q.source_verification, q.solution_verification, q.passage_id, q.dilr_set_id,
+           q.estimated_time_sec, q.origin, q.exam_year, q.exam_slot, q.question_number, q.source_verification, q.solution_verification, q.passage_id, q.dilr_set_id,
+           ${PROVENANCE_SQL} AS provenance,
            coalesce(st.attempts, 0) AS attempts, st.last_correct, st.avg_time, b.question_id IS NOT NULL AS bookmarked, coalesce(m.state, 'not_started') AS topic_state,
            count(*) OVER () AS total
       FROM questions q
@@ -97,7 +101,7 @@ questionsRouter.get('/', async (req, res) => {
 questionsRouter.get('/facets', async (_req, res) => {
   const [years, origins, sections] = await Promise.all([
     many("SELECT exam_year AS year, exam_slot AS slot, count(*) AS n FROM questions WHERE status = 'published' AND exam_year IS NOT NULL GROUP BY 1, 2 ORDER BY 1 DESC, 2"),
-    many("SELECT origin, source_verification, count(*) AS n FROM questions WHERE status = 'published' GROUP BY 1, 2"),
+    many(`SELECT q.origin, q.source_verification, ${PROVENANCE_SQL} AS provenance, count(*) AS n FROM questions q WHERE q.status = 'published' GROUP BY 1, 2, 3`),
     many("SELECT section_id, count(*) AS n FROM questions WHERE status = 'published' GROUP BY 1"),
   ]);
   res.json({ years, origins, sections });

@@ -64,7 +64,11 @@ describe('import validation', () => {
     expect(codes(validateItems([mcq({ ...base, examYear: 1980, sources: [{ name: 'Paper', reference: 'Q1' }] })], existing))).toContain('invalid_year');
     expect(codes(validateItems([mcq({ ...base, examYear: 2023, examSlot: 4, sources: [{ name: 'Paper', reference: 'Q1' }] })], existing))).toContain('invalid_slot');
     expect(codes(validateItems([mcq({ ...base, examYear: 2023, examSlot: 1, sources: [{ name: 'Paper' }] })], existing))).toContain('missing_provenance');
-    expect(codes(validateItems([mcq({ ...base, examYear: 2023, examSlot: 1, sources: [{ name: 'Paper', reference: 'Slot 1 QA Q4' }] })], existing))).toEqual([]);
+    expect(codes(validateItems([mcq({ ...base, examYear: 2023, examSlot: 1, sources: [{ name: 'Paper', reference: 'Slot 1 QA Q4' }] })], existing))).toEqual(
+      expect.arrayContaining(['incomplete_record', 'missing_answer_key']),
+    );
+    const complete = { ...base, examYear: 2023, examSlot: 1, questionNumber: 4, sources: [{ name: 'Paper', reference: 'Slot 1 QA Q4' }], answerKey: { name: 'Key', reference: 'Slot 1 key', answer: 'B' } };
+    expect(codes(validateItems([mcq(complete)], existing))).toEqual([]);
   });
   it('rejects unknown topics and section mismatches', () => {
     expect(codes(validateItems([mcq({ topic: 'nope' })], existing))).toContain('unknown_topic');

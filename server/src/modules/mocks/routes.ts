@@ -4,6 +4,7 @@ import { many, one } from '../../db/pool.js';
 import { userId } from '../../lib/auth.js';
 import { notFound } from '../../lib/errors.js';
 import { parseBody, uuidParam } from '../../lib/validate.js';
+import { learnerPattern } from '../../services/examConfigs.js';
 import { attemptState, createTest, nextSection, saveResponse, startOrResume, submit } from '../../services/mocks.js';
 
 export const mocksRouter = Router();
@@ -14,8 +15,9 @@ mocksRouter.get('/', async (req, res) => {
     `SELECT t.id, t.title, t.kind, t.sectional_lock, t.description, t.created_at, t.owner_id IS NULL AS platform,
             (SELECT count(*) FROM mock_test_questions mq JOIN mock_test_sections s ON s.id = mq.mock_test_section_id WHERE s.mock_test_id = t.id) AS question_count,
             (SELECT sum(duration_sec) FROM mock_test_sections s WHERE s.mock_test_id = t.id) AS duration_sec,
-            (SELECT json_agg(s.section_id ORDER BY s.position) FROM mock_test_sections s WHERE s.mock_test_id = t.id) AS sections
-       FROM mock_tests t WHERE t.owner_id IS NULL OR t.owner_id = $1 ORDER BY t.owner_id IS NULL DESC, t.created_at DESC LIMIT 100`,
+            (SELECT json_agg(s.section_id ORDER BY s.position) FROM mock_test_sections s WHERE s.mock_test_id = t.id) AS sections,
+            c.name AS pattern_name, c.version AS pattern_version, c.verification_status AS pattern_status
+       FROM mock_tests t LEFT JOIN exam_configs c ON c.id = t.exam_config_id WHERE t.owner_id IS NULL OR t.owner_id = $1 ORDER BY t.owner_id IS NULL DESC, t.created_at DESC LIMIT 100`,
     [uid],
   );
   const attempts = await many(
@@ -26,6 +28,11 @@ mocksRouter.get('/', async (req, res) => {
     [uid],
   );
   res.json({ tests, attempts });
+});
+
+/** The exam pattern new tests use, its verification status, and whether it matches the learner's exam year. */
+mocksRouter.get('/pattern', async (req, res) => {
+  res.json(await learnerPattern(userId(req)));
 });
 
 mocksRouter.post('/', async (req, res) => {

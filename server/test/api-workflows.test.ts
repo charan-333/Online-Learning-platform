@@ -218,11 +218,14 @@ describe('mock tests', () => {
     expect(an.body.summary.totals.correct).toBe(1);
   });
 
-  it('refuses a previous-year paper when no verified PYQs exist', async () => {
+  it('refuses a previous-year paper when no pattern or no verified PYQs exist for that year', async () => {
     const c = await signUp();
-    const r = await c.post('/api/mocks', { kind: 'pyq_paper', year: 2023, slot: 1 });
-    expect(r.status).toBe(400);
-    expect(r.body.error.message).toMatch(/No verified PYQs/);
+    const noPattern = await c.post('/api/mocks', { kind: 'pyq_paper', year: 2023, slot: 1 });
+    expect(noPattern.status).toBe(400);
+    expect(noPattern.body.error.message).toMatch(/No exam pattern is recorded for CAT 2023/);
+    const noPyqs = await c.post('/api/mocks', { kind: 'pyq_paper', year: 2024, slot: 1 });
+    expect(noPyqs.status).toBe(400);
+    expect(noPyqs.body.error.message).toMatch(/No verified PYQs/);
   });
 });
 
@@ -320,17 +323,21 @@ describe('admin content management', () => {
     expect(audit.body.items.some((a: any) => a.entity_id === qid || a.entity_id === 'adm-q-1')).toBe(true);
   });
 
-  it('only publishes an authentic PYQ after its source is verified', async () => {
+  it('keeps an imported authentic PYQ out of learners\' view until it is approved in review', async () => {
     const admin = await signUp({ admin: true });
     const src = [{ name: 'Test paper (fixture, not a real CAT paper)', reference: 'Fixture Q1' }];
-    const r = await admin.post('/api/admin/questions/import', { items: [item('adm-pyq-ok', { origin: 'authentic_pyq', examYear: 2022, examSlot: 1, sources: src })] });
+    const answerKey = { name: 'Test answer key (fixture)', reference: 'Fixture key Q1', answer: '10' };
+    const r = await admin.post('/api/admin/questions/import', {
+      items: [item('adm-pyq-ok', { origin: 'authentic_pyq', examYear: 2022, examSlot: 1, questionNumber: 1, sources: src, answerKey, sourceVerified: true, solutionVerified: true })],
+      publish: true,
+    });
     expect(r.body.accepted).toBe(1);
+    expect(JSON.stringify(r.body.report)).toContain('verification_flags_ignored');
+    const row = (await query('SELECT status, review_status, source_verification, answer_key_verification FROM questions WHERE external_id = $1', ['adm-pyq-ok'])).rows[0];
+    expect(row).toEqual({ status: 'draft', review_status: 'pending', source_verification: 'unverified', answer_key_verification: 'unverified' });
     const qid = await questionId('adm-pyq-ok');
-    await admin.post(`/api/admin/questions/${qid}/verify`, { solution: 'verified' });
     expect((await admin.post(`/api/admin/questions/${qid}/status`, { status: 'published' })).status).toBe(400);
-    expect((await admin.post(`/api/admin/questions/${qid}/verify`, { source: 'verified' })).status).toBe(200);
-    expect((await admin.post(`/api/admin/questions/${qid}/status`, { status: 'published' })).status).toBe(200);
-    // remove the fixture so it never sits in the bank as a published "PYQ"
+    expect((await admin.post(`/api/admin/questions/${qid}/verify`, { source: 'verified' })).status).toBe(400);
     await query('DELETE FROM questions WHERE id = $1', [qid]);
   });
 

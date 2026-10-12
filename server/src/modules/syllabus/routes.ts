@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { z } from 'zod';
 import { many, one } from '../../db/pool.js';
 import { userId } from '../../lib/auth.js';
+import { GROUP_PROVENANCE_SQL, GROUP_VISIBLE_SQL } from '../../domain/provenance.js';
 import { notFound } from '../../lib/errors.js';
 import { parseQuery } from '../../lib/validate.js';
 
@@ -102,18 +103,18 @@ export const groupsRouter = Router();
 
 groupsRouter.get('/passages', async (_req, res) => {
   const rows = await many(
-    `SELECT p.id, p.external_id, p.title, p.domain, p.difficulty, p.word_count, p.origin, p.exam_year, p.exam_slot,
-            (SELECT count(*) FROM questions q WHERE q.passage_id = p.id AND q.status = 'published') AS question_count
-       FROM passages p ORDER BY p.created_at`,
+    `SELECT g.id, g.external_id, g.title, g.domain, g.difficulty, g.word_count, g.origin, g.exam_year, g.exam_slot, ${GROUP_PROVENANCE_SQL} AS provenance,
+            (SELECT count(*) FROM questions q WHERE q.passage_id = g.id AND q.status = 'published') AS question_count
+       FROM passages g WHERE ${GROUP_VISIBLE_SQL} ORDER BY g.created_at`,
   );
   res.json({ items: rows });
 });
 
 groupsRouter.get('/dilr-sets', async (_req, res) => {
   const rows = await many(
-    `SELECT s.id, s.external_id, s.title, s.set_type, s.difficulty, s.origin, s.exam_year, s.exam_slot, s.estimated_time_sec,
-            (SELECT count(*) FROM questions q WHERE q.dilr_set_id = s.id AND q.status = 'published') AS question_count
-       FROM dilr_sets s ORDER BY s.created_at`,
+    `SELECT g.id, g.external_id, g.title, g.set_type, g.difficulty, g.origin, g.exam_year, g.exam_slot, g.estimated_time_sec, ${GROUP_PROVENANCE_SQL} AS provenance,
+            (SELECT count(*) FROM questions q WHERE q.dilr_set_id = g.id AND q.status = 'published') AS question_count
+       FROM dilr_sets g WHERE ${GROUP_VISIBLE_SQL} ORDER BY g.created_at`,
   );
   res.json({ items: rows });
 });
@@ -122,7 +123,8 @@ groupsRouter.get('/dilr-sets', async (_req, res) => {
 async function groupDetail(kind: 'passage' | 'dilr_set', id: string, uid: string, reveal: boolean) {
   const table = kind === 'passage' ? 'passages' : 'dilr_sets';
   const fk = kind === 'passage' ? 'passage_id' : 'dilr_set_id';
-  const g = await one(`SELECT * FROM ${table} WHERE id = $1`, [id]);
+  // A passage or set from a CAT paper stays hidden until its review approval.
+  const g = await one(`SELECT g.*, ${GROUP_PROVENANCE_SQL} AS provenance FROM ${table} g WHERE g.id = $1 AND ${GROUP_VISIBLE_SQL}`, [id]);
   if (!g) return null;
   const questions = await many(
     `SELECT q.id, q.external_id, q.position_in_group, q.question_type, q.difficulty, q.stem_md, q.topic_id, q.estimated_time_sec,

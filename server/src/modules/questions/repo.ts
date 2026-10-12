@@ -1,11 +1,13 @@
 import { many, one } from '../../db/pool.js';
+import { PROVENANCE_SQL } from '../../domain/provenance.js';
 
 /** Public view of a question: never includes the answer or solution. */
 export async function loadQuestionPublic(id: string, userId: string) {
   const q = await one(
     `SELECT q.id, q.external_id, q.exam_name, q.section_id, q.topic_id, t.name AS topic_name, q.subtopic_id, q.passage_id, q.dilr_set_id, q.position_in_group,
             q.question_type, q.difficulty, q.stem_md, q.estimated_time_sec, q.origin, q.exam_year, q.exam_slot, q.marks_correct, q.marks_wrong,
-            q.source_verification, q.solution_verification, q.version,
+            q.source_verification, q.solution_verification, q.answer_key_verification, q.question_number, q.version,
+            ${PROVENANCE_SQL} AS provenance,
             EXISTS (SELECT 1 FROM bookmarks b WHERE b.user_id = $2 AND b.question_id = q.id) AS bookmarked,
             (SELECT count(*) FROM question_attempts a WHERE a.user_id = $2 AND a.question_id = q.id) AS attempt_count,
             (SELECT a.is_correct FROM question_attempts a WHERE a.user_id = $2 AND a.question_id = q.id ORDER BY a.created_at DESC LIMIT 1) AS last_correct,
@@ -16,7 +18,10 @@ export async function loadQuestionPublic(id: string, userId: string) {
   );
   if (!q) return null;
   const options = await many('SELECT key, text_md FROM question_options WHERE question_id = $1 ORDER BY key', [id]);
-  const sources = await many('SELECT source_name, reference, url, license_note, verified_at IS NOT NULL AS verified FROM question_sources WHERE question_id = $1', [id]);
+  const sources = await many(
+    "SELECT source_name, reference, url, license_note, kind, verified_at IS NOT NULL AS verified FROM question_sources WHERE question_id = $1 AND kind <> 'answer_key' ORDER BY created_at",
+    [id],
+  );
   const tags = await many('SELECT t.name FROM question_tags qt JOIN tags t ON t.id = qt.tag_id WHERE qt.question_id = $1', [id]);
   let group: any = null;
   if (q.passage_id) {

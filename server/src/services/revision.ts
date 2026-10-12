@@ -1,4 +1,5 @@
 import { many, one, pool, query, type Db } from '../db/pool.js';
+import { PROVENANCE_SQL } from '../domain/provenance.js';
 import { initialDelayDays, nextReview, SRS_CONFIG } from '../domain/srs.js';
 
 export type QueueReason = 'incorrect' | 'low_confidence' | 'guessed' | 'first_exposure' | 'high_value_formula';
@@ -48,7 +49,8 @@ export async function reviewItem(userId: string, itemId: string, grade: 0 | 1 | 
 export async function dueQueue(userId: string, limit = 50) {
   const rows = await many(
     `SELECT r.*, t.name AS topic_name,
-            q.stem_md, q.estimated_time_sec, q.question_type, q.external_id,
+            q.stem_md, q.estimated_time_sec, q.question_type, q.external_id, q.exam_year, q.exam_slot,
+            CASE WHEN q.id IS NULL THEN NULL ELSE ${PROVENANCE_SQL} END AS provenance,
             f.title AS formula_title, f.formula_tex, f.explanation_md AS formula_explanation
        FROM revision_items r
        LEFT JOIN topics t ON t.id = r.topic_id
@@ -70,7 +72,9 @@ export async function dueQueue(userId: string, limit = 50) {
     reps: r.reps,
     lapses: r.lapses,
     estimatedSec: r.item_type === 'formula' ? 30 : r.item_type === 'topic' ? 300 : Math.round((r.estimated_time_sec ?? 90) * (r.item_type === 'error' ? 1.5 : 1)),
-    question: r.stem_md ? { id: r.ref_id, stem: r.stem_md, type: r.question_type, externalId: r.external_id } : null,
+    question: r.stem_md
+      ? { id: r.ref_id, stem: r.stem_md, type: r.question_type, externalId: r.external_id, provenance: r.provenance, examYear: r.exam_year, examSlot: r.exam_slot }
+      : null,
     formula: r.formula_title ? { title: r.formula_title, tex: r.formula_tex, explanation: r.formula_explanation } : null,
   }));
   const totalSec = items.reduce((s, i) => s + i.estimatedSec, 0);
