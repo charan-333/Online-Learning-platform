@@ -1,6 +1,8 @@
 import { z } from 'zod';
 
 export const ORIGINS = ['authentic_pyq', 'reconstructed', 'inspired', 'original_practice', 'ai_generated'] as const;
+/** Origins that may carry a paper year, slot and question number. */
+export const HISTORICAL_ORIGINS = new Set(['authentic_pyq', 'reconstructed']);
 export const DIFFICULTIES = ['easy', 'medium', 'difficult', 'advanced'] as const;
 
 const solutionSchema = z.object({
@@ -16,11 +18,31 @@ const solutionSchema = z.object({
   advanced: z.string().optional(),
 });
 
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Use YYYY-MM-DD');
+
 const sourceSchema = z.object({
   name: z.string().min(1),
   reference: z.string().default(''),
   url: z.string().url().optional(),
   license: z.string().default(''),
+  kind: z.enum(['question_paper', 'solution', 'other']).default('question_paper'),
+  accessedOn: isoDate.optional(),
+});
+
+/** Where the official answer comes from, and what it says. Required for authentic PYQs. */
+const answerKeySchema = z.object({
+  name: z.string().min(1),
+  reference: z.string().min(1),
+  url: z.string().url().optional(),
+  answer: z.string().min(1),
+  accessedOn: isoDate.optional(),
+});
+
+/** Provenance of a passage or DILR set taken from a paper. */
+const groupSourceSchema = z.object({
+  name: z.string().min(1),
+  reference: z.string().min(1),
+  url: z.string().url().optional(),
 });
 
 export const questionItem = z.object({
@@ -39,10 +61,13 @@ export const questionItem = z.object({
   origin: z.enum(ORIGINS),
   examYear: z.number().int().optional(),
   examSlot: z.number().int().optional(),
+  // Question number within the official paper's section, as printed.
+  questionNumber: z.number().int().positive().optional(),
   marksCorrect: z.number().optional(),
   marksWrong: z.number().optional(),
   sources: z.array(sourceSchema).optional(),
-  // Set only by an admin after checking the question against its source.
+  answerKey: answerKeySchema.optional(),
+  // Ignored for authentic PYQs: those are verified only through the admin review queue.
   sourceVerified: z.boolean().optional(),
   solutionVerified: z.boolean().optional(),
   passage: z.string().optional(),
@@ -66,6 +91,7 @@ export const passageItem = z.object({
   origin: z.enum(ORIGINS),
   examYear: z.number().int().optional(),
   examSlot: z.number().int().optional(),
+  source: groupSourceSchema.optional(),
 });
 
 export const setItem = z.object({
@@ -82,6 +108,7 @@ export const setItem = z.object({
   examYear: z.number().int().optional(),
   examSlot: z.number().int().optional(),
   estimatedTimeSec: z.number().int().positive().default(900),
+  source: groupSourceSchema.optional(),
 });
 
 export const importItem = z.discriminatedUnion('kind', [questionItem, passageItem, setItem]);

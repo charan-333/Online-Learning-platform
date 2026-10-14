@@ -1,8 +1,8 @@
 import { pool } from '../db/pool.js';
 import { migrateUp } from '../db/migrate.js';
-import { seedAll } from './seed.js';
+import { ensureCat2024Pattern, seedAll } from './seed.js';
 import { createUser } from '../modules/auth/service.js';
-import { one } from '../db/pool.js';
+import { one, tx } from '../db/pool.js';
 
 // --if-empty: used on every production start. Applies migrations, seeds reference content
 // only into an empty database, and creates the admin account if it does not exist yet.
@@ -12,8 +12,10 @@ async function main() {
   const applied = await migrateUp();
   if (applied.length) console.log(`Applied migrations: ${applied.join(', ')}`);
   const seeded = await one('SELECT 1 FROM topics LIMIT 1');
-  if (ifEmpty && seeded) console.log('Content already present; skipped seeding.');
-  else await seedAll();
+  if (ifEmpty && seeded) {
+    console.log('Content already present; skipped seeding.');
+    await tx((c) => ensureCat2024Pattern(c)); // attaches pattern sources added after the first deploy
+  } else await seedAll();
   const email = process.env.SEED_ADMIN_EMAIL;
   const password = process.env.SEED_ADMIN_PASSWORD;
   if (email && password) {

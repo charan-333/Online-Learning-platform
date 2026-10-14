@@ -5,3 +5,4 @@ server/uploads/
 web/test-results/
 web/playwright-report/
 *.log
+*.tsbuildinfo

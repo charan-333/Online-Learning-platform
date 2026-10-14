@@ -77,7 +77,7 @@ function TopicTable({ items }: { items: any[] }) {
                       </td>
                       <td className="small">
                         {t.question_count}
-                        {Number(t.pyq_count) > 0 && <span className="muted"> ({t.pyq_count} PYQ)</span>}
+                        {Number(t.pyq_count) > 0 && <span className="muted"> ({t.pyq_count} verified PYQ)</span>}
                       </td>
                       <td className="small muted">{(t.prerequisites ?? []).map((p: string) => names[p] ?? p).join(', ') || '—'}</td>
                     </tr>

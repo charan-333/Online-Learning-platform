@@ -11,15 +11,15 @@ Learner endpoints only ever read or change the signed-in user's own data.
 | POST | /register | `{email, password (≥10), displayName}` → signs in |
 | POST | /login | `{email, password}` → `{user, csrfToken}` |
 | POST | /logout | ends the session |
-| POST | /forgot-password | `{email}`; same response whether or not the account exists |
-| POST | /reset-password | `{token, password}`; signs out all sessions |
+| POST | /forgot-password | `{email}`; same response, returned before any lookup, whether or not the account exists; 5 per 15 min per IP |
+| POST | /reset-password | `{token, password}`; single-use, expiring token; signs out all sessions and emails a notice |
 | GET | /me | `{user, profile, csrfToken}` |
 
 ## Profile, account, notes (`/api`)
 | Method | Path | Notes |
 |---|---|---|
 | GET/PATCH | /profile | availability, self-ratings, exam year/date, mode, low-time mode, gamification |
-| GET | /exam-configs | exam pattern(s) with sections and marking, incl. verification status |
+| GET | /exam-configs | every pattern version (active first) with sections, marking, per-setting status and sources |
 | GET | /recommendations | top topics with reasons |
 | GET | /bookmarks | |
 | GET/POST | /notes | `?q=` search; body `{body, kind: note|annotation|highlight|workspace, questionId|topicId|passageId|dilrSetId, anchor?}` |
@@ -75,7 +75,8 @@ Learner endpoints only ever read or change the signed-in user's own data.
 ## Mock tests (`/api/mocks`)
 | Method | Path | Notes |
 |---|---|---|
-| GET | / | available tests and the learner's attempts |
+| GET | / | available tests (with the pattern version each uses) and the learner's attempts |
+| GET | /pattern | `{active, examYear, matchesExamYear, forExamYear}`: the pattern new tests use, its verification status, and whether it matches the learner's exam year |
 | POST | / | `{kind: full|sectional|topic|custom|pyq_paper|error_test|drill, sections?, topics?, difficulty?, origin?, year?, slot?, questionCount?, durationMin?}` |
 | POST | /:id/start | starts or resumes (one open attempt per test) |
 | GET | /attempts/:attemptId | state with server clock; applies timeouts |
@@ -101,12 +102,24 @@ Learner endpoints only ever read or change the signed-in user's own data.
 | Method | Path | Notes |
 |---|---|---|
 | POST | /questions/import | `{items, dryRun?, publish?, filename?}` → import job with issues |
+| POST | /questions/import-file | `{format: json|jsonl|csv, content, filename?, dryRun?, publish?}`; issues carry line numbers; the job keeps the file's SHA-256. PYQs always land pending review |
+| GET | /import-template.csv | header-only CSV template |
 | GET | /import-jobs, /import-jobs/:id | |
-| GET | /questions, /questions/:id | filters `status, origin, sourceVerification, solutionVerification, q`; detail has versions and audit |
-| PATCH | /questions/:id | edit; snapshots a version |
-| POST | /questions/:id/verify | `{source?, solution?, sourceRef?, note?}` |
-| POST | /questions/:id/status | `{status: draft|published|unpublished}`; PYQs need a verified source |
+| GET | /questions, /questions/:id | filters `status, origin, reviewStatus, sourceVerification, solutionVerification, q`; detail has versions, audit and (for PYQs) review checks |
+| PATCH | /questions/:id | edit; snapshots a version; any content or paper-field change to a PYQ sends it back to review (`reviewRequired`) |
+| POST | /questions/:id/verify | `{source?, solution?, sourceRef?, note?}`; not for PYQs (use review) |
+| POST | /questions/:id/status | `{status: draft|published|unpublished}`; PYQs must be approved in review |
 | GET | /questions/:id/versions/:versionId | snapshot |
 | GET | /audit, /quality | |
-| PUT | /exam-configs | upsert a year's pattern |
+| GET | /review | `?status=pending|rejected|approved`: standalone questions and whole passages/sets, each question with its checks |
+| POST | /review/questions/:id/approve | `{confirm: {paperSource, answerKey, solution}, note?, publish?}`; standalone PYQs only |
+| POST | /review/groups/:kind/:id/approve | `kind = passage|dilr_set`; same body; approves every pending question in the group or none |
+| POST | /review/reject | `{questionIds, note}` (note required) |
+| GET/POST | /exam-configs | list versions with status, sources and usage; create a new unverified, inactive version (`supersedesId?`) |
+| PATCH | /exam-configs/:id | edit a draft (inactive, unverified, unused) |
+| POST, DELETE | /exam-configs/:id/sources[/:sourceId] | `{kind: official|secondary, title, publisher?, url?, accessedOn?, supports?, note?}` |
+| POST | /exam-configs/:id/verify | `{verify?: {setting: officialSourceId}, unverify?: [setting]}` |
+| POST | /exam-configs/:id/activate | new tests use this version; old tests keep theirs |
+| GET | /email | provider, whether it reaches inboxes, last-24h outcomes, last success and failure |
+| POST | /email/test | sends a test message to the signed-in admin and returns the provider's result |
 | POST | /uploads | `{filename, dataBase64}` PNG/JPEG/WebP ≤ 2 MB → markdown snippet |

@@ -141,7 +141,10 @@ export async function recommendTopics(userId: string, limit = 5): Promise<Recomm
   return out;
 }
 
-/** Chooses practice questions for a topic: prefer unattempted, then previously wrong; level matched to mastery; authentic PYQs first. */
+/**
+ * Chooses practice questions for a topic: unattempted first, then previously wrong. Within each,
+ * verified CAT PYQs come before other questions, then questions at the learner's level.
+ */
 export async function pickQuestions(userId: string, topicId: string, budgetSec: number, exclude: string[] = []) {
   const m = await one('SELECT score FROM user_topic_mastery WHERE user_id = $1 AND topic_id = $2', [userId, topicId]);
   const score = m?.score ?? 0;
@@ -153,8 +156,9 @@ export async function pickQuestions(userId: string, topicId: string, budgetSec: 
        FROM questions q WHERE q.topic_id = $2 AND q.status = 'published' AND NOT (q.id = ANY($3::uuid[]))`,
     [userId, topicId, exclude],
   );
-  const rank = (r: any) =>
-    (r.attempts === 0 ? 0 : r.ever_wrong ? 1 : 3) * 10 + (target.includes(r.difficulty) ? 0 : 2) + (r.origin === 'authentic_pyq' ? 0 : 1);
+  // Published authentic PYQs are always verified and approved (enforced by the database).
+  const sourceRank = (origin: string) => (origin === 'authentic_pyq' ? 0 : origin === 'ai_generated' ? 2 : 1);
+  const rank = (r: any) => (r.attempts === 0 ? 0 : r.ever_wrong ? 1 : 3) * 100 + sourceRank(r.origin) * 10 + (target.includes(r.difficulty) ? 0 : 2);
   rows.sort((a, b) => rank(a) - rank(b));
   const picked: string[] = [];
   let used = 0;

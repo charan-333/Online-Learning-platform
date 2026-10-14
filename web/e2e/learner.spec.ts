@@ -8,11 +8,11 @@ test('register, onboard, practise a question, and see it in the error log and an
   await expect(page).toHaveURL(/\/onboarding/);
   await finishOnboardingSkippingDiagnostic(page);
   await expect(page.getByRole('heading', { name: /Hello, E2E Learner/ })).toBeVisible();
-  await expect(page.getByText('No authentic CAT PYQs have been imported yet')).toBeVisible();
+  await expect(page.getByText('No verified CAT PYQs are available yet')).toBeVisible();
 
   // question bank: honest labelling and filters
   await page.getByRole('link', { name: 'Question bank' }).click();
-  await expect(page.getByText('The bank has no authentic CAT PYQs yet')).toBeVisible();
+  await expect(page.getByText('The bank has no verified CAT PYQs yet')).toBeVisible();
   await page.getByLabel('Section', { exact: true }).selectOption('QA');
   await page.getByLabel('Search questions').fill('c100-qa-pct-001');
   await page.getByRole('button', { name: 'Search' }).click();

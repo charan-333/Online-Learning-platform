@@ -6,7 +6,10 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import { Layout } from './components/Layout';
 import { Spinner } from './components/ui';
 import { AuthProvider, useAuth } from './lib/auth';
-import { AdminAudit, AdminExamPattern, AdminImport, AdminLayout, AdminOverview, AdminQuestionEdit, AdminQuestions } from './pages/Admin';
+import { AdminAudit, AdminImport, AdminLayout, AdminOverview, AdminQuestionEdit, AdminQuestions } from './pages/Admin';
+import { AdminEmail } from './pages/AdminEmail';
+import { AdminExamPattern } from './pages/AdminPattern';
+import { AdminReview } from './pages/AdminReview';
 import { Analytics } from './pages/Analytics';
 import { ForgotPassword, Login, Register, ResetPassword } from './pages/Auth';
 import { Dashboard } from './pages/Dashboard';
@@ -85,7 +88,9 @@ function App() {
           <Route path="import" element={<AdminImport />} />
           <Route path="questions" element={<AdminQuestions />} />
           <Route path="questions/:id" element={<AdminQuestionEdit />} />
+          <Route path="review" element={<AdminReview />} />
           <Route path="exam-pattern" element={<AdminExamPattern />} />
+          <Route path="email" element={<AdminEmail />} />
           <Route path="audit" element={<AdminAudit />} />
         </Route>
         <Route path="*" element={<div className="empty">Page not found.</div>} />

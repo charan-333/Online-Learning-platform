@@ -13,8 +13,10 @@ export function AdminLayout() {
         {[
           ['/admin', 'Overview'],
           ['/admin/import', 'Import'],
+          ['/admin/review', 'PYQ review'],
           ['/admin/questions', 'Questions'],
           ['/admin/exam-pattern', 'Exam pattern'],
+          ['/admin/email', 'Email'],
           ['/admin/audit', 'Audit log'],
         ].map(([to, l]) => (
           <NavLink key={to} to={to} end={to === '/admin'} style={({ isActive }) => ({ padding: '8px 12px', textDecoration: 'none', fontWeight: isActive ? 700 : 400, borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent' })}>
@@ -30,17 +32,28 @@ export function AdminLayout() {
 export function AdminOverview() {
   const q = useApi('/api/admin/quality');
   const jobs = useApi('/api/admin/import-jobs');
+  const email = useApi('/api/admin/email');
   if (!q.data) return <Spinner />;
   const d = q.data;
   return (
     <div>
       <PageHeader title="Content admin" subtitle="Import, edit, verify and publish questions. Every change is versioned and audited." />
+      {email.data && !email.data.configured && (
+        <div className="alert alert-warn">
+          {email.data.summary} <Link to="/admin/email">Email settings</Link>
+        </div>
+      )}
+      {Number(d.pyq_pending_review) > 0 && (
+        <div className="alert alert-info">
+          {d.pyq_pending_review} question(s) submitted as CAT PYQs are waiting for review. <Link to="/admin/review">Open the review queue</Link>
+        </div>
+      )}
       <div className="grid grid-4 mb">
         <Card>
           <Stat label="Questions" value={d.total} hint={`${d.published} published`} />
         </Card>
         <Card>
-          <Stat label="Authentic PYQs" value={d.pyq} hint={`${d.pyq_verified} with verified source`} />
+          <Stat label="Verified PYQs" value={d.pyq_verified} hint={`${d.pyq_pending_review} awaiting review · ${d.unverified_historical} unverified historical`} />
         </Card>
         <Card>
           <Stat label="Solutions unverified" value={d.solution_unverified} />
@@ -92,39 +105,40 @@ const EXAMPLE = `{
       "topic": "qa-percentages",
       "type": "MCQ",
       "difficulty": "medium",
-      "stem": "…question text exactly as in the paper…",
+      "stem": "…question text exactly as printed in the paper…",
       "options": { "A": "…", "B": "…", "C": "…", "D": "…" },
       "answer": "C",
       "estimatedTimeSec": 120,
       "origin": "authentic_pyq",
       "examYear": 2023,
       "examSlot": 1,
-      "sources": [{ "name": "CAT 2023 Slot 1 question paper", "reference": "QA Q1", "url": "https://…" }],
-      "solution": { "learn": "…", "examMethod": "…", "hints": ["…"], "verification": "…", "distractors": { "A": "…" } }
+      "questionNumber": 1,
+      "sources": [{ "name": "…official question paper…", "reference": "Slot 1, QA, Q1", "url": "https://…", "accessedOn": "2026-01-31" }],
+      "answerKey": { "name": "…official answer key…", "reference": "Slot 1, QA, Q1", "answer": "C" },
+      "solution": { "learn": "…", "hints": ["…"], "verification": "…", "distractors": { "A": "…", "B": "…", "D": "…" } }
     }
   ]
 }`;
 
+type Format = 'json' | 'jsonl' | 'csv';
+const formatOf = (name: string): Format => (/\.csv$/i.test(name) ? 'csv' : /\.(jsonl|ndjson)$/i.test(name) ? 'jsonl' : 'json');
+
 export function AdminImport() {
   const [text, setText] = useState('');
+  const [format, setFormat] = useState<Format>('json');
   const [filename, setFilename] = useState('');
   const [publish, setPublish] = useState(false);
   const [report, setReport] = useState<any>(null);
   const [err, setErr] = useState<Error | null>(null);
   const [busy, setBusy] = useState(false);
-  const parse = () => {
-    const v = JSON.parse(text);
-    return Array.isArray(v) ? v : v.items;
-  };
   const run = async (dryRun: boolean) => {
     setErr(null);
     setBusy(true);
     try {
-      const items = parse();
-      if (!Array.isArray(items)) throw new Error('Expected an array of items or { "items": [...] }');
-      setReport(await api.post('/api/admin/questions/import', { items, dryRun, publish, filename }));
+      setReport(await api.post('/api/admin/questions/import-file', { format, content: text, dryRun, publish, filename }));
     } catch (e) {
       setErr(e as Error);
+      setReport(null);
     } finally {
       setBusy(false);
     }
@@ -133,26 +147,42 @@ export function AdminImport() {
     if (!f) return;
     if (f.size > 4 * 1024 * 1024) return setErr(new Error('File is larger than 4 MB; split it into smaller batches.'));
     setFilename(f.name);
+    setFormat(formatOf(f.name));
     setText(await f.text());
   };
   const issues: any[] = report ? (typeof report.report === 'string' ? JSON.parse(report.report) : report.report) : [];
   return (
     <div>
-      <PageHeader title="Import questions" subtitle="JSON batches of questions, RC passages and DILR sets. Always dry-run first." />
+      <PageHeader title="Import questions" subtitle="JSON, JSON Lines or CSV batches of questions, RC passages and DILR sets. Always validate first." />
       <div className="alert alert-warn">
-        Only mark an item <code>authentic_pyq</code> when it is copied from an actual CAT paper you can cite. Year, slot and a source reference are required, and the source must be verified by an admin before the question can be published.
+        Label an item <code>authentic_pyq</code> only when it is copied from an actual CAT paper you can cite, with its question number and the official answer key. Imports never publish these: each one goes to
+        the <Link to="/admin/review">review queue</Link>, where an admin compares it with the paper and the key. Use <code>reconstructed</code> for questions recalled from memory or taken from an unofficial
+        source; learners see those as unverified historical questions.
       </div>
       <Card>
-        <div className="field">
-          <label htmlFor="imp-file">JSON file</label>
-          <input id="imp-file" type="file" accept="application/json,.json" onChange={(e) => void onFile(e.target.files?.[0])} />
+        <div className="row" style={{ alignItems: 'flex-end' }}>
+          <div className="field">
+            <label htmlFor="imp-file">File (.json, .jsonl or .csv)</label>
+            <input id="imp-file" type="file" accept=".json,.jsonl,.ndjson,.csv,application/json,text/csv" onChange={(e) => void onFile(e.target.files?.[0])} />
+          </div>
+          <div className="field">
+            <label htmlFor="imp-format">Format</label>
+            <select id="imp-format" value={format} onChange={(e) => setFormat(e.target.value as Format)}>
+              <option value="json">JSON</option>
+              <option value="jsonl">JSON Lines</option>
+              <option value="csv">CSV</option>
+            </select>
+          </div>
+          <a className="btn btn-sm" href="/api/admin/import-template.csv" download>
+            Download CSV template
+          </a>
         </div>
         <div className="field">
-          <label htmlFor="imp-text">Or paste JSON</label>
-          <textarea id="imp-text" style={{ minHeight: 220, fontFamily: 'var(--mono)', fontSize: 13 }} value={text} onChange={(e) => setText(e.target.value)} placeholder={EXAMPLE} />
+          <label htmlFor="imp-text">Or paste the file contents</label>
+          <textarea id="imp-text" style={{ minHeight: 220, fontFamily: 'var(--mono)', fontSize: 13 }} value={text} onChange={(e) => setText(e.target.value)} placeholder={format === 'json' ? EXAMPLE : ''} />
         </div>
         <label className="check mb">
-          <input type="checkbox" checked={publish} onChange={(e) => setPublish(e.target.checked)} /> Publish valid items immediately (non-PYQ items with solutions only)
+          <input type="checkbox" checked={publish} onChange={(e) => setPublish(e.target.checked)} /> Publish valid practice items immediately (never applies to authentic PYQs)
         </label>
         <div className="row">
           <button className="btn" disabled={busy || !text.trim()} onClick={() => void run(true)}>
@@ -168,13 +198,14 @@ export function AdminImport() {
         <Card title={report.dry_run ? 'Validation report' : `Import ${report.status}`}>
           <p>
             {report.accepted} of {report.total} item(s) {report.dry_run ? 'would be accepted' : 'accepted'}; {report.rejected} rejected.
+            {report.file_sha256 && <span className="tiny muted"> File SHA-256 {report.file_sha256.slice(0, 16)}…</span>}
           </p>
           {issues.length > 0 && (
             <div className="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>Item</th>
+                    <th>Line / item</th>
                     <th>ID</th>
                     <th>Severity</th>
                     <th>Issue</th>
@@ -183,7 +214,7 @@ export function AdminImport() {
                 <tbody>
                   {issues.map((i, n) => (
                     <tr key={n}>
-                      <td>{i.index >= 0 ? i.index + 1 : '—'}</td>
+                      <td>{i.line ? `line ${i.line}` : i.index >= 0 ? `item ${i.index + 1}` : '—'}</td>
                       <td className="small">{i.externalId ?? ''}</td>
                       <td>
                         <Badge tone={i.severity === 'error' ? 'bad' : 'warn'}>{i.severity}</Badge>
@@ -204,7 +235,7 @@ export function AdminImport() {
 }
 
 export function AdminQuestions() {
-  const [f, setF] = useState({ status: '', origin: '', sourceVerification: '', solutionVerification: '', q: '' });
+  const [f, setF] = useState({ status: '', origin: '', reviewStatus: '', sourceVerification: '', solutionVerification: '', q: '' });
   const [page, setPage] = useState(1);
   const list = useApi(`/api/admin/questions${qs({ ...f, page, pageSize: 50 })}`);
   const sel = (k: keyof typeof f, label: string, opts: [string, string][]) => (
@@ -235,6 +266,11 @@ export function AdminQuestions() {
             ['unpublished', 'Unpublished'],
           ])}
           {sel('origin', 'Origin', Object.entries(ORIGIN_LABEL))}
+          {sel('reviewStatus', 'PYQ review', [
+            ['pending', 'Awaiting review'],
+            ['approved', 'Approved'],
+            ['rejected', 'Rejected'],
+          ])}
           {sel('sourceVerification', 'Source', [
             ['verified', 'Verified'],
             ['unverified', 'Unverified'],
@@ -272,7 +308,7 @@ export function AdminQuestions() {
                   <div className="tiny muted">{q.topic_id}</div>
                 </td>
                 <td>
-                  <OriginBadge origin={q.origin} year={q.exam_year} slot={q.exam_slot} verification={q.source_verification} />
+                  <OriginBadge {...q} year={q.exam_year} slot={q.exam_slot} number={q.question_number} />
                 </td>
                 <td>
                   <Badge tone={q.status === 'published' ? 'good' : ''}>{q.status}</Badge>
@@ -321,6 +357,7 @@ export function AdminQuestionEdit() {
       estimatedTimeSec: d.estimated_time_sec,
       examYear: d.exam_year ?? '',
       examSlot: d.exam_slot ?? '',
+      questionNumber: d.question_number ?? '',
       solution: {
         learn: s.learn_md ?? '',
         examMethod: s.exam_method_md ?? '',
@@ -341,22 +378,24 @@ export function AdminQuestionEdit() {
   if (!f) return null;
   const d = q.data;
   const isPyq = d.origin === 'authentic_pyq';
+  const isHistorical = isPyq || d.origin === 'reconstructed';
   const set = (k: string, v: any) => setF({ ...f, [k]: v });
   const setS = (k: string, v: any) => setF({ ...f, solution: { ...f.solution, [k]: v } });
 
-  const act = async (fn: () => Promise<unknown>, ok: string) => {
+  const act = async (fn: () => Promise<unknown>, ok: string | (() => string)) => {
     setErr(null);
     setMsg('');
     try {
       await fn();
-      setMsg(ok);
+      setMsg(typeof ok === 'function' ? ok() : ok);
       q.reload();
     } catch (e) {
       setErr(e as Error);
     }
   };
-  const save = () =>
-    act(async () => {
+  const save = () => {
+    let reviewRequired = false;
+    return act(async () => {
       const body: any = {
         topicId: f.topicId,
         difficulty: f.difficulty,
@@ -366,9 +405,14 @@ export function AdminQuestionEdit() {
         solution: { ...f.solution, hints: f.solution.hints.split('\n').map((h: string) => h.trim()).filter(Boolean), distractors: JSON.parse(f.solution.distractors || '{}') },
       };
       if (d.question_type === 'MCQ') body.options = f.options;
-      if (isPyq) Object.assign(body, { examYear: f.examYear ? Number(f.examYear) : null, examSlot: f.examSlot ? Number(f.examSlot) : null });
-      await api.patch(`/api/admin/questions/${id}`, body);
-    }, 'Saved as a new version. Solution verification was reset if the content changed.');
+      if (isHistorical) Object.assign(body, { examYear: f.examYear ? Number(f.examYear) : null, examSlot: f.examSlot ? Number(f.examSlot) : null, questionNumber: f.questionNumber ? Number(f.questionNumber) : null });
+      reviewRequired = (await api.patch(`/api/admin/questions/${id}`, body)).reviewRequired;
+    }, () =>
+      reviewRequired
+        ? 'Saved as a new version. Because this is a PYQ, it is unpublished and back in the review queue.'
+        : 'Saved as a new version. Solution verification was reset if the content changed.',
+    );
+  };
 
   const upload = async (file: File | undefined) => {
     if (!file) return;
@@ -387,7 +431,7 @@ export function AdminQuestionEdit() {
         title={d.external_id}
         subtitle={
           <span className="row">
-            <OriginBadge origin={d.origin} year={d.exam_year} slot={d.exam_slot} verification={d.source_verification} />
+            <OriginBadge {...d} year={d.exam_year} slot={d.exam_slot} number={d.question_number} />
             <Badge tone={d.status === 'published' ? 'good' : ''}>{d.status}</Badge>
             <Badge tone={d.solution_verification === 'verified' ? 'good' : 'warn'}>solution {d.solution_verification}</Badge>
             <span className="small">v{d.version}</span>
@@ -396,7 +440,12 @@ export function AdminQuestionEdit() {
         actions={
           <>
             {d.status !== 'published' ? (
-              <button className="btn btn-primary" onClick={() => void act(() => api.post(`/api/admin/questions/${id}/status`, { status: 'published' }), 'Published.')}>
+              <button
+                className="btn btn-primary"
+                disabled={isPyq && d.review_status !== 'approved'}
+                title={isPyq && d.review_status !== 'approved' ? 'Approve it in the PYQ review queue first' : undefined}
+                onClick={() => void act(() => api.post(`/api/admin/questions/${id}/status`, { status: 'published' }), 'Published.')}
+              >
                 Publish
               </button>
             ) : (
@@ -410,51 +459,80 @@ export function AdminQuestionEdit() {
       <ErrorBox error={err} />
       {msg && <div className="alert alert-good">{msg}</div>}
       <div className="grid grid-2">
-        <Card title="Verification">
-          <div className="row mb">
-            <button className="btn btn-sm" onClick={() => void act(() => api.post(`/api/admin/questions/${id}/verify`, { solution: 'verified' }), 'Solution marked verified.')}>
-              Mark solution verified
-            </button>
-            <button className="btn btn-sm" onClick={() => void act(() => api.post(`/api/admin/questions/${id}/verify`, { solution: 'unverified' }), 'Solution marked unverified.')}>
-              Mark solution unverified
-            </button>
-          </div>
-          {isPyq ? (
-            <>
-              <p className="small">Sources:</p>
-              <ul className="small">
-                {d.sources.map((s: any) => (
-                  <li key={s.id}>
-                    {s.source_name} — {s.reference} {s.url && <a href={s.url}>link</a>} {s.verified_at ? <Badge tone="good">verified {fmtDate(s.verified_at)}</Badge> : <Badge tone="warn">unverified</Badge>}
+        {isPyq ? (
+          <Card title="PYQ review">
+            <p className="small">
+              Review status: <Badge tone={d.review_status === 'approved' ? 'good' : d.review_status === 'rejected' ? 'bad' : 'warn'}>{d.review_status}</Badge>
+              {d.reviewed_at && ` · ${fmtDate(d.reviewed_at)}`}
+              {d.review_note && ` · ${d.review_note}`}
+            </p>
+            <ul className="small">
+              {d.sources.map((s: any) => (
+                <li key={s.id}>
+                  {s.kind === 'answer_key' ? 'Answer key' : s.kind === 'solution' ? 'Solution source' : s.kind === 'other' ? 'Other' : 'Question paper'}: {s.source_name}, {s.reference}
+                  {s.recorded_answer && ` (answer ${s.recorded_answer})`} {s.url && <a href={s.url} target="_blank" rel="noreferrer noopener">link</a>}
+                </li>
+              ))}
+            </ul>
+            {d.checks && (
+              <ul className="checks small" aria-label="Automated checks">
+                {d.checks.map((c: any) => (
+                  <li key={c.code} className={c.ok ? 'ok' : c.blocking ? 'fail' : 'warn'}>
+                    <span aria-hidden="true">{c.ok ? '✓' : c.blocking ? '✗' : '!'}</span> {c.message}
                   </li>
                 ))}
               </ul>
-              <div className="grid grid-3">
-                <input aria-label="Source name" placeholder="Paper name" value={src.name} onChange={(e) => setSrc({ ...src, name: e.target.value })} />
-                <input aria-label="Reference" placeholder="Section and question number" value={src.reference} onChange={(e) => setSrc({ ...src, reference: e.target.value })} />
-                <input aria-label="URL" placeholder="https://…" value={src.url} onChange={(e) => setSrc({ ...src, url: e.target.value })} />
-              </div>
-              <div className="row mt">
-                <button
-                  className="btn btn-sm btn-primary"
-                  onClick={() =>
-                    void act(
-                      () => api.post(`/api/admin/questions/${id}/verify`, { source: 'verified', sourceRef: src.name ? { name: src.name, reference: src.reference, url: src.url || undefined } : undefined }),
-                      'Source marked verified.',
-                    )
-                  }
-                >
-                  I checked this against the source: mark verified
-                </button>
-                <button className="btn btn-sm" onClick={() => void act(() => api.post(`/api/admin/questions/${id}/verify`, { source: 'unverified' }), 'Source marked unverified.')}>
-                  Mark unverified
-                </button>
-              </div>
-            </>
-          ) : (
-            <p className="small muted">Source verification applies only to authentic PYQs. This item is labelled “{ORIGIN_LABEL[d.origin]}”.</p>
-          )}
-        </Card>
+            )}
+            <p className="small muted">
+              Approve PYQs in the <Link to="/admin/review">review queue</Link>. Changing the text, options, answer, solution, year, slot or number sends it back there and unpublishes it.
+            </p>
+          </Card>
+        ) : (
+          <Card title="Verification">
+            <div className="row mb">
+              <button className="btn btn-sm" onClick={() => void act(() => api.post(`/api/admin/questions/${id}/verify`, { solution: 'verified' }), 'Solution marked verified.')}>
+                Mark solution verified
+              </button>
+              <button className="btn btn-sm" onClick={() => void act(() => api.post(`/api/admin/questions/${id}/verify`, { solution: 'unverified' }), 'Solution marked unverified.')}>
+                Mark solution unverified
+              </button>
+            </div>
+            {d.origin === 'reconstructed' ? (
+              <>
+                <p className="small">
+                  Learners always see this as an unverified historical question. Recording where the recollection came from still helps editors.
+                </p>
+                <ul className="small">
+                  {d.sources.map((s: any) => (
+                    <li key={s.id}>
+                      {s.source_name}, {s.reference} {s.url && <a href={s.url}>link</a>} {s.verified_at ? <Badge tone="good">checked {fmtDate(s.verified_at)}</Badge> : <Badge tone="warn">not checked</Badge>}
+                    </li>
+                  ))}
+                </ul>
+                <div className="grid grid-3">
+                  <input aria-label="Source name" placeholder="Where it was recalled from" value={src.name} onChange={(e) => setSrc({ ...src, name: e.target.value })} />
+                  <input aria-label="Reference" placeholder="Section and question number" value={src.reference} onChange={(e) => setSrc({ ...src, reference: e.target.value })} />
+                  <input aria-label="URL" placeholder="https://…" value={src.url} onChange={(e) => setSrc({ ...src, url: e.target.value })} />
+                </div>
+                <div className="row mt">
+                  <button
+                    className="btn btn-sm"
+                    onClick={() =>
+                      void act(
+                        () => api.post(`/api/admin/questions/${id}/verify`, { source: 'verified', sourceRef: src.name ? { name: src.name, reference: src.reference, url: src.url || undefined } : undefined }),
+                        'Recollection source recorded as checked.',
+                      )
+                    }
+                  >
+                    I checked this recollection source
+                  </button>
+                </div>
+              </>
+            ) : (
+              <p className="small muted">This item is labelled “{ORIGIN_LABEL[d.origin]}” and is not from a CAT paper.</p>
+            )}
+          </Card>
+        )}
         <Card title="History">
           <ul className="small">
             {d.versions.map((v: any) => (
@@ -517,7 +595,7 @@ export function AdminQuestionEdit() {
                 <label htmlFor="ae-time">Target time (s)</label>
                 <input id="ae-time" type="number" value={f.estimatedTimeSec} onChange={(e) => set('estimatedTimeSec', e.target.value)} />
               </div>
-              {isPyq && (
+              {isHistorical && (
                 <>
                   <div className="field">
                     <label htmlFor="ae-year">Exam year</label>
@@ -526,6 +604,10 @@ export function AdminQuestionEdit() {
                   <div className="field">
                     <label htmlFor="ae-slot">Slot</label>
                     <input id="ae-slot" type="number" min={1} max={3} value={f.examSlot} onChange={(e) => set('examSlot', e.target.value)} />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="ae-num">Question number in the paper</label>
+                    <input id="ae-num" type="number" min={1} value={f.questionNumber} onChange={(e) => set('questionNumber', e.target.value)} />
                   </div>
                 </>
               )}
@@ -573,106 +655,6 @@ export function AdminQuestionEdit() {
         )}
         <button className="btn btn-primary" onClick={() => void save()}>
           Save new version
-        </button>
-      </Card>
-    </div>
-  );
-}
-
-export function AdminExamPattern() {
-  const cfgs = useApi('/api/exam-configs');
-  const [f, setF] = useState<any>(null);
-  const [msg, setMsg] = useState('');
-  const [err, setErr] = useState<Error | null>(null);
-  useEffect(() => {
-    const c = cfgs.data?.items?.[0];
-    if (!c) return;
-    setF({
-      year: c.year,
-      name: c.name,
-      totalDurationMin: c.total_duration_min,
-      sectionalLock: c.sectional_lock,
-      verificationStatus: c.verification_status,
-      sourceNote: c.source_note,
-      sections: c.sections.map((s: any) => ({ sectionId: s.section_id, position: s.position, durationMin: s.duration_min, questionCount: s.question_count, mcqCorrect: Number(s.mcq_correct), mcqWrong: Number(s.mcq_wrong), titaCorrect: Number(s.tita_correct), titaWrong: Number(s.tita_wrong) })),
-    });
-  }, [cfgs.data]);
-  if (!f) return <Spinner />;
-  const setSec = (i: number, k: string, v: string) => setF({ ...f, sections: f.sections.map((s: any, j: number) => (j === i ? { ...s, [k]: Number(v) } : s)) });
-  const save = async () => {
-    setErr(null);
-    try {
-      await api.put('/api/admin/exam-configs', { ...f, year: Number(f.year), totalDurationMin: Number(f.totalDurationMin) });
-      setMsg('Saved. New tests use this pattern.');
-      cfgs.reload();
-    } catch (e) {
-      setErr(e as Error);
-    }
-  };
-  return (
-    <div>
-      <PageHeader title="Exam pattern" subtitle="Section order, timing and marking used by mock tests. Mark it verified only after checking the official notification." />
-      <ErrorBox error={err} />
-      {msg && <div className="alert alert-good">{msg}</div>}
-      <Card>
-        <div className="grid grid-3">
-          <div className="field">
-            <label htmlFor="ep-year">Year</label>
-            <input id="ep-year" type="number" value={f.year} onChange={(e) => setF({ ...f, year: e.target.value })} />
-          </div>
-          <div className="field">
-            <label htmlFor="ep-name">Name</label>
-            <input id="ep-name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
-          </div>
-          <div className="field">
-            <label htmlFor="ep-total">Total minutes</label>
-            <input id="ep-total" type="number" value={f.totalDurationMin} onChange={(e) => setF({ ...f, totalDurationMin: e.target.value })} />
-          </div>
-        </div>
-        <label className="check">
-          <input type="checkbox" checked={f.sectionalLock} onChange={(e) => setF({ ...f, sectionalLock: e.target.checked })} /> Sections are locked (no switching)
-        </label>
-        <div className="field mt">
-          <label htmlFor="ep-status">Verification</label>
-          <select id="ep-status" value={f.verificationStatus} onChange={(e) => setF({ ...f, verificationStatus: e.target.value })}>
-            <option value="unverified">Unverified</option>
-            <option value="verified">Verified against the official notification</option>
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="ep-note">Source note</label>
-          <textarea id="ep-note" value={f.sourceNote} onChange={(e) => setF({ ...f, sourceNote: e.target.value })} />
-        </div>
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Section</th>
-                <th>Order</th>
-                <th>Minutes</th>
-                <th>Questions</th>
-                <th>MCQ +</th>
-                <th>MCQ −</th>
-                <th>TITA +</th>
-                <th>TITA −</th>
-              </tr>
-            </thead>
-            <tbody>
-              {f.sections.map((s: any, i: number) => (
-                <tr key={s.sectionId}>
-                  <td>{s.sectionId}</td>
-                  {(['position', 'durationMin', 'questionCount', 'mcqCorrect', 'mcqWrong', 'titaCorrect', 'titaWrong'] as const).map((k) => (
-                    <td key={k}>
-                      <input aria-label={`${s.sectionId} ${k}`} type="number" style={{ width: 70 }} value={s[k]} onChange={(e) => setSec(i, k, e.target.value)} />
-                    </td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <button className="btn btn-primary mt" onClick={() => void save()}>
-          Save pattern
         </button>
       </Card>
     </div>

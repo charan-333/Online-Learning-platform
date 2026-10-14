@@ -14,8 +14,8 @@ function migrationNames() {
     .sort();
 }
 
-/** Applies pending migrations in order, each inside its own transaction. */
-export async function migrateUp(url = databaseUrl) {
+/** Applies pending migrations in order, each inside its own transaction. `to` stops after that migration. */
+export async function migrateUp(url = databaseUrl, opts: { to?: string } = {}) {
   const client = new pg.Client({ connectionString: url });
   await client.connect();
   try {
@@ -23,6 +23,7 @@ export async function migrateUp(url = databaseUrl) {
     const applied = new Set((await client.query('SELECT name FROM schema_migrations')).rows.map((r) => r.name));
     const done: string[] = [];
     for (const name of migrationNames()) {
+      if (opts.to && name > opts.to) break;
       if (applied.has(name)) continue;
       const sql = fs.readFileSync(path.join(dir, `${name}.up.sql`), 'utf8');
       await client.query('BEGIN');

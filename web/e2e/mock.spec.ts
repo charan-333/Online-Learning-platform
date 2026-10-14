@@ -5,11 +5,14 @@ test('sample mock: answer, flag, move sections, resume, submit, analysis without
   await registerLearner(page);
   await finishOnboardingSkippingDiagnostic(page);
   await page.getByRole('link', { name: 'Mocks' }).click();
-  await expect(page.getByText(/has not been verified against the official notification/)).toBeVisible();
+  const banner = page.getByTestId('pattern-banner');
+  await expect(banner).toContainText('New tests follow CAT 2024 pattern (version 1), which is not verified against an official source.');
+  await expect(banner).toContainText('Treat the timing and marking as provisional');
   const row = page.locator('li', { hasText: 'Sample test in CAT format' });
   await row.getByRole('button', { name: 'Start' }).click();
   await expect(page).toHaveURL(/\/mocks\/run\//);
   await expect(page.getByText(/Section 1 of 3: VARC/)).toBeVisible();
+  await expect(page.getByTestId('run-pattern')).toHaveText('Timing and marking: CAT 2024 pattern (version 1, unverified)');
   await expect(page.getByRole('timer')).toBeVisible();
 
   await page.getByRole('radiogroup', { name: 'Answer options' }).getByRole('radio').first().check();

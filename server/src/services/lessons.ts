@@ -1,4 +1,5 @@
 import { many, one, query } from '../db/pool.js';
+import { PROVENANCE_SQL } from '../domain/provenance.js';
 import { notFound } from '../lib/errors.js';
 import { pickQuestions, recommendTopics } from './recommend.js';
 import { dueQueue, fitToBudget } from './revision.js';
@@ -107,8 +108,10 @@ export async function getOrCreateDailyLesson(userId: string, minutes: number, da
       block.note = topic.concept_md ? undefined : 'Concept notes for this topic are an outline only.';
     } else if (t.type === 'worked_example') {
       const ex = await one(
+        // Showing a worked solution uses the question up, so verified PYQs are kept for practice when other questions exist.
         `SELECT q.id FROM questions q WHERE q.topic_id = $2 AND q.status = 'published' AND q.passage_id IS NULL AND q.dilr_set_id IS NULL
-          ORDER BY (SELECT count(*) FROM question_attempts a WHERE a.user_id = $1 AND a.question_id = q.id) DESC,
+          ORDER BY (q.origin = 'authentic_pyq'),
+                   (SELECT count(*) FROM question_attempts a WHERE a.user_id = $1 AND a.question_id = q.id) DESC,
                    array_position(ARRAY['easy','medium','difficult','advanced'], q.difficulty) LIMIT 1`,
         [userId, topic.id],
       );
@@ -149,7 +152,11 @@ export async function lessonDetail(userId: string, lessonId: string) {
   const prereqs = await many('SELECT t.id, t.name FROM topic_prerequisites p JOIN topics t ON t.id = p.prerequisite_id WHERE p.topic_id = $1', [lesson.topic_id]);
   const formulas = await many('SELECT id, title, formula_tex, explanation_md FROM formula_cards WHERE topic_id = $1 ORDER BY high_value DESC', [lesson.topic_id]);
   const questions = qids.length
-    ? await many('SELECT id, external_id, question_type, difficulty, estimated_time_sec, origin, left(stem_md, 160) AS stem_preview FROM questions WHERE id = ANY($1::uuid[])', [qids])
+    ? await many(
+        `SELECT q.id, q.external_id, q.question_type, q.difficulty, q.estimated_time_sec, q.origin, q.exam_year, q.exam_slot, ${PROVENANCE_SQL} AS provenance,
+                left(q.stem_md, 160) AS stem_preview FROM questions q WHERE q.id = ANY($1::uuid[])`,
+        [qids],
+      )
     : [];
   return { ...lesson, progress, attempts, topic, prerequisites: prereqs, formulas, questions };
 }

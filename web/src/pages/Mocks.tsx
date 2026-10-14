@@ -7,15 +7,62 @@ import { api } from '../lib/api';
 import { fmtClock, fmtDate, fmtSec } from '../lib/format';
 import { useApi } from '../lib/useApi';
 
+const PATTERN_STATUS: Record<string, string> = {
+  verified: 'verified against official sources',
+  partially_verified: 'only partly verified against official sources',
+  unverified: 'not verified against an official source',
+};
+
+const marking = (s: any) => `MCQ +${s.mcqCorrect}/${s.mcqWrong}, TITA +${s.titaCorrect}/${s.titaWrong}`;
+
+/** Which exam pattern new tests use, how far it is verified, and whether it fits the learner's exam year. */
+export function PatternBanner({ p }: { p: any }) {
+  const a = p.active;
+  const marks = [...new Set(a.sections.map(marking))];
+  return (
+    <div className={`alert ${a.status === 'verified' ? 'alert-info' : 'alert-warn'}`} data-testid="pattern-banner">
+      <div>
+        <strong>New tests follow {a.name}</strong> (version {a.version}), which is {PATTERN_STATUS[a.status] ?? a.status}.
+      </div>
+      <div className="small">
+        {a.sections.map((s: any) => `${s.sectionId} ${s.questionCount} questions in ${s.durationMin} min`).join(' · ')}
+        {a.sectionalLock ? ' · sections locked in order' : ''} · {marks.length === 1 ? marks[0] : a.sections.map((s: any) => `${s.sectionId}: ${marking(s)}`).join('; ')} · unanswered 0
+      </div>
+      {a.status !== 'verified' && <div className="small">Treat the timing and marking as provisional until an editor checks them against the official CAT notification.</div>}
+      {p.matchesExamYear === false && (
+        <div className="small">
+          You are preparing for CAT {p.examYear}, but this pattern is for CAT {a.year}.{' '}
+          {p.forExamYear
+            ? `A CAT ${p.examYear} pattern is also recorded (${PATTERN_STATUS[p.forExamYear.status] ?? p.forExamYear.status}); an editor can make it the one tests use.`
+            : `The CAT ${p.examYear} pattern can differ. Check the official notification when it is published.`}
+        </div>
+      )}
+      {a.sources.length > 0 && (
+        <details className="small">
+          <summary>Sources</summary>
+          <ul>
+            {a.sources.map((s: any, i: number) => (
+              <li key={i}>
+                {s.kind === 'official' ? 'Official' : 'Secondary'}: {s.url ? <a href={s.url} target="_blank" rel="noreferrer noopener">{s.title}</a> : s.title}
+                {s.publisher ? `, ${s.publisher}` : ''}
+                {s.accessedOn ? ` (accessed ${String(s.accessedOn).slice(0, 10)})` : ''}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
+}
+
 export function Mocks() {
   const list = useApi('/api/mocks');
-  const configs = useApi('/api/exam-configs');
+  const pattern = useApi('/api/mocks/pattern');
   const [params] = useSearchParams();
   const nav = useNavigate();
   const [f, setF] = useState({ kind: params.get('create') ?? 'sectional', sections: ['QA'] as string[], questionCount: 10, durationMin: 20, year: '', slot: '' });
   const [err, setErr] = useState<Error | null>(null);
   const [busy, setBusy] = useState(false);
-  const cfg = configs.data?.items?.[0];
 
   const start = useCallback(
     async (testId: string) => {
@@ -57,12 +104,7 @@ export function Mocks() {
     <div>
       <PageHeader title="Mock tests" subtitle="Server-timed tests with sectional locks, autosave, resume and full analysis." />
       <ErrorBox error={err ?? list.error} />
-      {cfg && (
-        <div className={`alert ${cfg.verification_status === 'verified' ? 'alert-info' : 'alert-warn'}`}>
-          Exam pattern in use: {cfg.name} ({cfg.sections.map((s: any) => `${s.section_id} ${s.question_count}Q/${s.duration_min}m`).join(', ')}; MCQ +{cfg.sections[0]?.mcq_correct}/{cfg.sections[0]?.mcq_wrong}, TITA no negative).{' '}
-          {cfg.verification_status !== 'verified' && 'This pattern has not been verified against the official notification for your exam year; an admin can update it.'}
-        </div>
-      )}
+      {pattern.data && <PatternBanner p={pattern.data} />}
       {open.length > 0 && (
         <Card title="In progress">
           {open.map((a: any) => (
@@ -89,7 +131,11 @@ export function Mocks() {
                       {t.question_count} questions · {fmtSec(Number(t.duration_sec))} · {(t.sections ?? []).join(' → ')}
                       {t.sectional_lock ? ' · sectional lock' : ''}
                     </div>
-                    {t.description && <div className="tiny muted">{t.description}</div>}
+                    {t.pattern_name && (
+                      <div className="tiny muted">
+                        Pattern: {t.pattern_name}, version {t.pattern_version} ({t.pattern_status === 'verified' ? 'verified' : 'not fully verified'})
+                      </div>
+                    )}
                   </div>
                   <button className="btn btn-sm" onClick={() => void start(t.id)}>
                     Start
@@ -271,7 +317,7 @@ export function MockRun() {
           <span className="small muted">
             +{q.marksCorrect} / {q.question_type === 'MCQ' ? q.marksWrong : 0}
           </span>
-          <OriginBadge origin={q.origin} year={q.exam_year} slot={q.exam_slot} />
+          <OriginBadge provenance={q.provenance} origin={q.origin} year={q.exam_year} slot={q.exam_slot} number={q.question_number} />
         </div>
         <button className="btn btn-sm" aria-pressed={!!r?.flagged} onClick={() => void save(q.id, { flagged: !r?.flagged })}>
           {r?.flagged ? '⚑ Flagged' : '⚐ Flag for review'}
@@ -322,6 +368,11 @@ export function MockRun() {
           <div className="small muted">
             Section {sectionIdx + 1} of {d.sections.length}: {section?.sectionId} {d.test.sectionalLock ? '(locked sections)' : ''}
           </div>
+          {d.test.examPattern && (
+            <div className="tiny muted" data-testid="run-pattern">
+              Timing and marking: {d.test.examPattern.label}
+            </div>
+          )}
         </div>
         <div className="row">
           {remaining !== null && (

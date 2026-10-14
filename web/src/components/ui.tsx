@@ -1,7 +1,7 @@
 import { type ReactNode, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { ApiError } from '../lib/api';
-import { DIFFICULTY_LABEL, ORIGIN_LABEL, STATE_LABEL } from '../lib/format';
+import { DIFFICULTY_LABEL, PROVENANCE_HELP, PROVENANCE_LABEL, provenanceOf, STATE_LABEL } from '../lib/format';
 
 export function Spinner({ label = 'Loading' }: { label?: string }) {
   return (
@@ -51,18 +51,29 @@ export function Badge({ tone = '', children, title }: { tone?: '' | 'good' | 'ba
   );
 }
 
-/** Content provenance is always visible: learners must never mistake practice for a real CAT question. */
-export function OriginBadge({ origin, year, slot, verification }: { origin: string; year?: number | null; slot?: number | null; verification?: string }) {
-  if (origin === 'authentic_pyq') {
-    return (
-      <Badge tone={verification === 'verified' ? 'good' : 'warn'} title={verification === 'verified' ? 'Source checked by an editor' : 'Source not yet verified'}>
-        CAT {year ?? ''}
-        {slot ? ` · Slot ${slot}` : ''} · {verification === 'verified' ? 'verified source' : 'source unverified'}
-      </Badge>
-    );
-  }
-  const tone = origin === 'ai_generated' ? 'info' : 'outline';
-  return <Badge tone={tone}>{ORIGIN_LABEL[origin] ?? origin}</Badge>;
+/**
+ * Content provenance is always visible: learners must never mistake practice or an unverified
+ * recollection for a real CAT question.
+ */
+export function OriginBadge(props: {
+  provenance?: string | null;
+  origin: string;
+  year?: number | null;
+  slot?: number | null;
+  number?: number | null;
+  review_status?: string | null;
+  source_verification?: string | null;
+  answer_key_verification?: string | null;
+}) {
+  const p = provenanceOf(props);
+  const paper = props.year ? `CAT ${props.year}${props.slot ? ` · Slot ${props.slot}` : ''}${props.number ? ` · Q${props.number}` : ''}` : '';
+  const tone = p === 'verified_pyq' ? 'good' : p === 'pyq_under_review' || p === 'unverified_historical' ? 'warn' : p === 'ai_generated' ? 'info' : 'outline';
+  const text = p === 'verified_pyq' ? `Verified PYQ${paper ? ` · ${paper}` : ''}` : p === 'unverified_historical' ? `Unverified historical${paper ? ` · ${paper}` : ''}` : p === 'pyq_under_review' ? `PYQ awaiting review${paper ? ` · ${paper}` : ''}` : PROVENANCE_LABEL[p];
+  return (
+    <Badge tone={tone} title={PROVENANCE_HELP[p]}>
+      {text}
+    </Badge>
+  );
 }
 
 const STATE_TONE: Record<string, '' | 'good' | 'bad' | 'warn' | 'info' | 'accent'> = {

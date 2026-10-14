@@ -1,3 +1,4 @@
+import type pg from 'pg';
 import { many, one, query, tx } from '../db/pool.js';
 import { runImport } from '../modules/admin/importer.js';
 import { FORMULAS } from './content/formulas.js';
@@ -45,14 +46,52 @@ export async function seedReference() {
         c,
       );
     }
-    // Exam pattern. Marked UNVERIFIED: an admin must confirm it against the official
-    // IIM notification for the year before it is treated as authoritative.
-    const cfg = await one(
-      `INSERT INTO exam_configs(year, name, total_duration_min, sectional_lock, verification_status, source_note)
-       VALUES (2024, 'CAT 2024 pattern', 120, true, 'unverified',
-         'Commonly reported CAT 2024 structure: three sections in fixed order (VARC, DILR, QA), 40 minutes each, 68 questions; +3 for a correct answer, −1 for a wrong MCQ, 0 for a wrong TITA. Verify against the official CAT notification before relying on it.')
-       ON CONFLICT (year) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
-      [],
+    await ensureCat2024Pattern(c);
+  });
+}
+
+/**
+ * What was checked about the CAT 2024 pattern while building CAT 100 (2026-10-12). The official
+ * Information Bulletin could not be opened from the build environment, so no simulator setting
+ * is verified. An admin verifies settings in Content admin → Exam pattern once they have read
+ * the bulletin.
+ */
+export const CAT_2024_SOURCES = [
+  {
+    kind: 'official' as const,
+    title: 'CAT 2024 advertisement',
+    publisher: 'Indian Institute of Management Lucknow (iiml.ac.in)',
+    url: 'https://iiml.ac.in/hi/sites/default/files/upload/news/CAT_2024_Advertisement.pdf',
+    accessedOn: '2026-10-12',
+    supports:
+      'States that CAT 2024 is a computer-based test on November 24, 2024 in three sessions, with registration from August 1 to September 13, 2024. ' +
+      'It does not state sections, timing, question counts or marking, so it verifies none of the simulator settings.',
+    note: 'The CAT 2024 Information Bulletin on iimcat.ac.in could not be reached from the build environment.',
+  },
+  {
+    kind: 'secondary' as const,
+    title: 'Common Admission Test',
+    publisher: 'Wikipedia',
+    url: 'https://en.wikipedia.org/wiki/Common_Admission_Test',
+    accessedOn: '2026-10-12',
+    supports:
+      'Describes CAT 2024 as three 40-minute parts, 120 minutes in total (citing Shiksha); gives 68 questions split 24 VARC, 22 DILR and 22 QA for CAT 2025 (citing IMS); ' +
+      'and gives +3 for a correct answer, −1 for a wrong MCQ and no negative marking for TITA (citing learningroutes.in). Secondary and partly uncited, so it cannot verify anything.',
+    note: '',
+  },
+];
+
+/** Creates the CAT 2024 pattern as version 1 if it is missing and attaches the sources above. Never overwrites a stored pattern. */
+export async function ensureCat2024Pattern(c: pg.PoolClient) {
+  let cfg = await one('SELECT id FROM exam_configs WHERE year = 2024 ORDER BY version LIMIT 1', [], c);
+  if (!cfg) {
+    const hasActive = await one('SELECT 1 FROM exam_configs WHERE is_active', [], c);
+    cfg = await one(
+      `INSERT INTO exam_configs(year, version, name, total_duration_min, sectional_lock, verification_status, source_note, is_active)
+       VALUES (2024, 1, 'CAT 2024 pattern', 120, true, 'unverified',
+         'Structure as commonly reported for CAT 2024: three sections in fixed order (VARC, DILR, QA), 40 minutes each, 68 questions; +3 for a correct answer, −1 for a wrong MCQ, 0 for a wrong TITA, 0 when unanswered. Not yet checked against the official CAT 2024 Information Bulletin.',
+         $1) RETURNING id`,
+      [!hasActive],
       c,
     );
     const rows: [string, number, number][] = [
@@ -63,12 +102,22 @@ export async function seedReference() {
     for (const [sec, pos, count] of rows) {
       await query(
         `INSERT INTO exam_config_sections(exam_config_id, section_id, position, duration_min, question_count, mcq_correct, mcq_wrong, tita_correct, tita_wrong)
-         VALUES ($1,$2,$3,40,$4,3,-1,3,0) ON CONFLICT (exam_config_id, section_id) DO NOTHING`,
+         VALUES ($1,$2,$3,40,$4,3,-1,3,0)`,
         [cfg!.id, sec, pos, count],
         c,
       );
     }
-  });
+  }
+  for (const src of CAT_2024_SOURCES) {
+    const exists = await one('SELECT 1 FROM exam_config_sources WHERE exam_config_id = $1 AND url = $2', [cfg!.id, src.url], c);
+    if (!exists) {
+      await query(
+        'INSERT INTO exam_config_sources(exam_config_id, kind, title, publisher, url, accessed_on, supports, note) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+        [cfg!.id, src.kind, src.title, src.publisher, src.url, src.accessedOn, src.supports, src.note],
+        c,
+      );
+    }
+  }
 }
 
 /** Clearly labelled original practice content (not PYQs). */
@@ -85,8 +134,8 @@ export async function seedSamples() {
 export async function seedSampleMocks() {
   const exists = await one("SELECT id FROM mock_tests WHERE owner_id IS NULL AND title = 'Sample test in CAT format'");
   if (exists) return;
-  const cfg = await one('SELECT id FROM exam_configs ORDER BY year DESC LIMIT 1');
-  const sections = await many('SELECT section_id, position, duration_min FROM exam_config_sections WHERE exam_config_id = $1 ORDER BY position', [cfg!.id]);
+  const cfg = await one('SELECT id FROM exam_configs WHERE is_active');
+  const sections = await many('SELECT * FROM exam_config_sections WHERE exam_config_id = $1 ORDER BY position', [cfg!.id]);
   await tx(async (c) => {
     const m = await one(
       `INSERT INTO mock_tests(owner_id, title, kind, exam_config_id, sectional_lock, description) VALUES (NULL, 'Sample test in CAT format', 'full', $1, true,
@@ -97,13 +146,16 @@ export async function seedSampleMocks() {
     for (const s of sections) {
       const sec = await one('INSERT INTO mock_test_sections(mock_test_id, section_id, position, duration_sec) VALUES ($1,$2,$3,$4) RETURNING id', [m!.id, s.section_id, s.position, s.duration_min * 60], c);
       const qs = await many(
-        `SELECT id, question_type, marks_correct, marks_wrong FROM questions WHERE status = 'published' AND section_id = $1
+        `SELECT id, question_type FROM questions WHERE status = 'published' AND section_id = $1
          ORDER BY passage_id NULLS LAST, dilr_set_id NULLS LAST, position_in_group NULLS LAST, external_id`,
         [s.section_id],
         c,
       );
       for (const [i, q] of qs.entries()) {
-        await query('INSERT INTO mock_test_questions(mock_test_section_id, question_id, position, marks_correct, marks_wrong) VALUES ($1,$2,$3,$4,$5)', [sec!.id, q.id, i + 1, q.marks_correct, q.marks_wrong], c);
+        // Marking comes from the exam pattern the test was built with.
+        const mc = q.question_type === 'MCQ' ? s.mcq_correct : s.tita_correct;
+        const mw = q.question_type === 'MCQ' ? s.mcq_wrong : s.tita_wrong;
+        await query('INSERT INTO mock_test_questions(mock_test_section_id, question_id, position, marks_correct, marks_wrong) VALUES ($1,$2,$3,$4,$5)', [sec!.id, q.id, i + 1, mc, mw], c);
       }
     }
   });

@@ -7,7 +7,7 @@ import { api, qs } from '../lib/api';
 import { fmtSec, ORIGIN_LABEL, STATE_LABEL } from '../lib/format';
 import { useApi } from '../lib/useApi';
 
-const FILTER_KEYS = ['q', 'section', 'topic', 'difficulty', 'type', 'origin', 'year', 'slot', 'sourceVerification', 'attempted', 'result', 'previouslyIncorrect', 'bookmarked', 'mastery', 'minTimeSec', 'maxTimeSec', 'sort'] as const;
+const FILTER_KEYS = ['q', 'section', 'topic', 'difficulty', 'type', 'provenance', 'origin', 'year', 'slot', 'sourceVerification', 'attempted', 'result', 'previouslyIncorrect', 'bookmarked', 'mastery', 'minTimeSec', 'maxTimeSec', 'sort'] as const;
 
 function useFilters() {
   const [params, setParams] = useSearchParams();
@@ -31,7 +31,9 @@ export function QuestionBank() {
   const [search, setSearch] = useState(f.q);
   const filterQs = qs(f);
   const topicOpts = (topics.data?.items ?? []).filter((t: any) => !f.section || t.section_id === f.section);
-  const pyqCount = (facets.data?.origins ?? []).filter((o: any) => o.origin === 'authentic_pyq').reduce((s: number, o: any) => s + Number(o.n), 0);
+  const countOf = (p: string) => (facets.data?.origins ?? []).filter((o: any) => o.provenance === p).reduce((s: number, o: any) => s + Number(o.n), 0);
+  const pyqCount = countOf('verified_pyq');
+  const historicalCount = countOf('unverified_historical');
 
   const sel = (k: (typeof FILTER_KEYS)[number], label: string, opts: [string, string][]) => (
     <div className="field" style={{ minWidth: 150 }}>
@@ -60,7 +62,11 @@ export function QuestionBank() {
       />
       {facets.data && pyqCount === 0 && (
         <div className="alert alert-warn">
-          The bank has no authentic CAT PYQs yet. All {facets.data.sections.reduce((s: number, x: any) => s + Number(x.n), 0)} questions are CAT 100 original practice, labelled on every card. Year and slot filters will work once verified PYQs are imported.
+          The bank has no verified CAT PYQs yet.{' '}
+          {historicalCount > 0
+            ? `${historicalCount} question(s) are unverified historical recollections, labelled as such; the rest are practice questions written for CAT 100.`
+            : `All ${facets.data.sections.reduce((s: number, x: any) => s + Number(x.n), 0)} questions are practice questions written for CAT 100, labelled on every card.`}{' '}
+          Verified PYQs appear here, and are picked first for practice and tests, once an editor approves them.
         </div>
       )}
       <Card>
@@ -97,7 +103,12 @@ export function QuestionBank() {
             ['MCQ', 'MCQ'],
             ['TITA', 'TITA'],
           ])}
-          {sel('origin', 'Source type', Object.entries(ORIGIN_LABEL))}
+          {sel('provenance', 'Source', [
+            ['verified_pyq', 'Verified CAT PYQs'],
+            ['unverified_historical', 'Unverified historical'],
+            ['practice', 'Practice (not from a CAT paper)'],
+          ])}
+          {sel('origin', 'Origin detail', Object.entries(ORIGIN_LABEL))}
           {sel('year', 'Year', [...new Set((facets.data?.years ?? []).map((y: any) => String(y.year)))].map((y) => [y, y] as [string, string]))}
           {sel('slot', 'Slot', [
             ['1', 'Slot 1'],
@@ -155,7 +166,7 @@ export function QuestionBank() {
                     <span className="small">{q.topic_name}</span>
                     <DifficultyBadge d={q.difficulty} />
                     <Badge tone="outline">{q.question_type}</Badge>
-                    <OriginBadge origin={q.origin} year={q.exam_year} slot={q.exam_slot} verification={q.source_verification} />
+                    <OriginBadge provenance={q.provenance} origin={q.origin} year={q.exam_year} slot={q.exam_slot} number={q.question_number} />
                     {q.bookmarked && <Badge tone="warn">★</Badge>}
                   </div>
                   <div className="row small">
@@ -260,7 +271,7 @@ export function Practice() {
     return (
       <Card title="Nothing to practise">
         <p>No questions match this practice set.</p>
-        {params.get('origin') === 'authentic_pyq' && <p className="small">No authentic CAT PYQs have been imported yet. Try the same mode with “All practice questions”.</p>}
+        {params.get('origin') === 'authentic_pyq' && <p className="small">No verified CAT PYQs are available yet. Try the same mode with “All practice questions”.</p>}
         <Link to="/modes">Back to practice modes</Link>
       </Card>
     );
@@ -350,7 +361,7 @@ export function PracticeModes() {
           <div className="field">
             <label htmlFor="m-origin">Questions</label>
             <select id="m-origin" value={o.origin} onChange={(e) => setO({ ...o, origin: e.target.value })}>
-              <option value="authentic_pyq">Authentic CAT PYQs only ({pyq})</option>
+              <option value="authentic_pyq">Verified CAT PYQs only ({pyq})</option>
               <option value="">All practice questions</option>
             </select>
           </div>
@@ -394,7 +405,7 @@ export function PracticeModes() {
             </select>
           </div>
         </div>
-        {pyq === 0 && <p className="small muted">No authentic PYQs are in the bank yet, so year and slot modes are unavailable and other modes use labelled original practice questions.</p>}
+        {pyq === 0 && <p className="small muted">No verified PYQs are in the bank yet, so year and slot modes are unavailable and other modes use labelled practice questions.</p>}
       </Card>
       <div className="grid grid-3">
         {MODES.map((m) => {

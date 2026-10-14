@@ -1,8 +1,10 @@
 import type pg from 'pg';
 import { many, one, pool, query, tx } from '../db/pool.js';
 import { classify, expectedValue, MOCK_CLASS_LABEL, successProbability, type MockClass } from '../domain/mockAnalysis.js';
+import { PROVENANCE_SQL } from '../domain/provenance.js';
 import { marksFor } from '../domain/scoring.js';
 import { badRequest, conflict, forbidden, notFound } from '../lib/errors.js';
+import { activeConfig, configForYear, loadConfig, type LoadedConfig } from './examConfigs.js';
 import { recomputeTopicMastery } from './mastery.js';
 import { enqueueRevision } from './revision.js';
 
@@ -102,7 +104,8 @@ export async function attemptState(userId: string, attemptId: string) {
   const responses = await many('SELECT question_id, answer, flagged, visited, time_spent_sec FROM mock_responses WHERE attempt_id = $1', [attemptId]);
   const qids = structure.sections.flatMap((s) => s.questions.map((q) => q.question_id));
   const qs = await many(
-    `SELECT q.id, q.section_id, q.question_type, q.difficulty, q.stem_md, q.passage_id, q.dilr_set_id, q.origin, q.exam_year, q.exam_slot, q.topic_id,
+    `SELECT q.id, q.section_id, q.question_type, q.difficulty, q.stem_md, q.passage_id, q.dilr_set_id, q.origin, q.exam_year, q.exam_slot, q.question_number, q.topic_id,
+            ${PROVENANCE_SQL} AS provenance,
             (SELECT json_agg(json_build_object('key', o.key, 'text_md', o.text_md) ORDER BY o.key) FROM question_options o WHERE o.question_id = q.id) AS options
        FROM questions q WHERE q.id = ANY($1::uuid[])`,
     [qids],
@@ -112,6 +115,7 @@ export async function attemptState(userId: string, attemptId: string) {
   const passages = passageIds.length ? await many('SELECT id, title, body_md FROM passages WHERE id = ANY($1::uuid[])', [passageIds]) : [];
   const sets = setIds.length ? await many('SELECT id, title, body_md FROM dilr_sets WHERE id = ANY($1::uuid[])', [setIds]) : [];
   const { sectionDeadline } = attempt.status === 'in_progress' ? deadlines(attempt, structure) : { sectionDeadline: null };
+  const pattern = structure.test.exam_config_id ? await loadConfig(structure.test.exam_config_id) : null;
   const visibleSections = structure.test.sectional_lock && attempt.status === 'in_progress' ? [attempt.current_section] : structure.sections.map((_, i) => i);
   return {
     attempt: {
@@ -125,7 +129,14 @@ export async function attemptState(userId: string, attemptId: string) {
       deadline: sectionDeadline,
       serverNow: new Date(),
     },
-    test: { id: structure.test.id, title: structure.test.title, kind: structure.test.kind, sectionalLock: structure.test.sectional_lock, description: structure.test.description },
+    test: {
+      id: structure.test.id,
+      title: structure.test.title,
+      kind: structure.test.kind,
+      sectionalLock: structure.test.sectional_lock,
+      description: structure.test.description,
+      examPattern: pattern ? { id: pattern.id, label: pattern.label, status: pattern.status, year: pattern.year, version: pattern.version } : null,
+    },
     sections: structure.sections.map((s, i) => ({
       index: i,
       sectionId: s.section_id,
@@ -365,7 +376,14 @@ async function finaliseAttempt(c: pg.PoolClient, attempt: any, reason: 'manual' 
   for (const t of touched) await recomputeTopicMastery(attempt.user_id, t, c);
 }
 
-/** Builds a test from the question bank using the latest exam pattern for timing and marking. */
+const provenanceRank = (origin: string) => (origin === 'authentic_pyq' ? 0 : origin === 'ai_generated' ? 2 : 1);
+
+/**
+ * Builds a test from the question bank. Timing and marking come from an exam pattern version:
+ * the active one, or for a previous-year paper the pattern recorded for that year. The test keeps
+ * that version, so activating a newer pattern later does not change how it is scored.
+ * Verified PYQs are chosen before other questions when the bank has them.
+ */
 export async function createTest(
   userId: string,
   spec: {
@@ -381,8 +399,14 @@ export async function createTest(
     durationMin?: number;
   },
 ) {
-  const cfg = await one('SELECT * FROM exam_configs ORDER BY year DESC LIMIT 1');
-  const cfgSections = await many('SELECT * FROM exam_config_sections WHERE exam_config_id = $1 ORDER BY position', [cfg.id]);
+  let cfg: LoadedConfig;
+  if (spec.kind === 'pyq_paper') {
+    if (!spec.year) throw badRequest('Year is required for a previous-year paper');
+    const forYear = await configForYear(spec.year);
+    if (!forYear) throw badRequest(`No exam pattern is recorded for CAT ${spec.year}. An admin must add that year's pattern before its paper can be timed and scored.`);
+    cfg = forYear;
+  } else cfg = await activeConfig();
+  const cfgSections: any[] = cfg.sections;
   const sectionOrder = cfgSections.map((s) => s.section_id);
   const sections = spec.kind === 'full' || spec.kind === 'pyq_paper' ? sectionOrder : spec.sections?.length ? sectionOrder.filter((s) => spec.sections!.includes(s)) : sectionOrder;
 
@@ -391,7 +415,7 @@ export async function createTest(
   if (spec.topics?.length) params.push(spec.topics), where.push(`q.topic_id = ANY($${params.length})`);
   if (spec.difficulty?.length) params.push(spec.difficulty), where.push(`q.difficulty = ANY($${params.length})`);
   if (spec.kind === 'pyq_paper') {
-    if (!spec.year) throw badRequest('Year is required for a previous-year paper');
+    // Published authentic PYQs are verified and approved (enforced by the database).
     params.push(spec.year), where.push(`q.origin = 'authentic_pyq' AND q.exam_year = $${params.length}`);
     if (spec.slot) params.push(spec.slot), where.push(`q.exam_slot = $${params.length}`);
   } else if (spec.origin?.length) params.push(spec.origin), where.push(`q.origin = ANY($${params.length})`);
@@ -400,34 +424,39 @@ export async function createTest(
     where.push(`q.id IN (SELECT question_id FROM error_logs WHERE user_id = $${params.length} AND resolved_at IS NULL)`);
   }
   const pool_ = await many(
-    `SELECT q.id, q.section_id, q.question_type, q.passage_id, q.dilr_set_id, q.position_in_group, q.estimated_time_sec FROM questions q
-      WHERE ${where.join(' AND ')} ORDER BY q.section_id, q.passage_id NULLS LAST, q.dilr_set_id NULLS LAST, q.position_in_group NULLS LAST, md5(q.id::text || $${params.length + 1})`,
+    `SELECT q.id, q.section_id, q.question_type, q.passage_id, q.dilr_set_id, q.position_in_group, q.estimated_time_sec, q.origin, q.question_number,
+            md5(coalesce(q.passage_id, q.dilr_set_id, q.id)::text || $${params.length + 1}) AS shuffle
+       FROM questions q
+      WHERE ${where.join(' AND ')}
+      ORDER BY q.section_id, q.question_number NULLS LAST, q.position_in_group NULLS LAST, q.external_id`,
     [...params, userId + Date.now()],
   );
   if (!pool_.length) throw badRequest(spec.kind === 'pyq_paper' ? 'No verified PYQs exist for that year and slot yet. Import them through the admin console.' : 'No questions match these filters');
 
-  const limitPerSection = spec.kind === 'full' || spec.kind === 'pyq_paper' ? null : spec.questionCount ?? null;
+  // Pattern tests take the pattern's question count per section; custom tests take the requested count.
+  const isPattern = spec.kind === 'full' || spec.kind === 'sectional' || spec.kind === 'pyq_paper';
   const chosen: Record<string, any[]> = {};
   for (const s of sections) {
     const qs = pool_.filter((q) => q.section_id === s);
-    if (!limitPerSection) {
-      chosen[s] = qs;
+    const limit = spec.kind === 'pyq_paper' ? null : isPattern ? cfgSections.find((x) => x.section_id === s)?.question_count ?? null : spec.questionCount ?? null;
+    if (spec.kind === 'pyq_paper') {
+      chosen[s] = qs; // the whole paper, in paper order
       continue;
     }
-    // Keep passages and DILR sets whole.
-    const out: any[] = [];
+    // Keep passages and DILR sets whole; verified PYQs first, then a per-test shuffle.
     const groups = new Map<string, any[]>();
     for (const q of qs) {
       const key = q.passage_id ?? q.dilr_set_id ?? q.id;
       groups.set(key, [...(groups.get(key) ?? []), q]);
     }
-    for (const g of groups.values()) {
-      if (out.length >= limitPerSection) break;
+    const ordered = [...groups.values()].sort((a, b) => provenanceRank(a[0].origin) - provenanceRank(b[0].origin) || (a[0].shuffle < b[0].shuffle ? -1 : 1));
+    const out: any[] = [];
+    for (const g of ordered) {
+      if (limit !== null && out.length >= limit) break;
       out.push(...g);
     }
     chosen[s] = out;
   }
-  const isPattern = spec.kind === 'full' || spec.kind === 'sectional' || spec.kind === 'pyq_paper';
   const title =
     spec.title ??
     {
@@ -442,7 +471,7 @@ export async function createTest(
   return tx(async (c) => {
     const t = await one(
       'INSERT INTO mock_tests(owner_id, title, kind, exam_config_id, sectional_lock, description) VALUES ($1,$2,$3,$4,$5,$6) RETURNING *',
-      [userId, title, spec.kind, cfg.id, isPattern && sections.length > 1, isPattern ? `Timing and marking follow the ${cfg.name} configuration (${cfg.verification_status}).` : 'Custom timing; marking follows the exam pattern.'],
+      [userId, title, spec.kind, cfg.id, isPattern && sections.length > 1, isPattern ? `Timing and marking follow ${cfg.label}.` : `Custom timing; marking follows ${cfg.label}.`],
       c,
     );
     let pos = 1;

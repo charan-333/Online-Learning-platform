@@ -49,16 +49,22 @@ TLS, add `?sslmode=require` to `DATABASE_URL`.
 | `COOKIE_SECURE` | yes in production | `true` when served over HTTPS |
 | `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | first start | Creates the admin account if it is missing |
 | `CORS_ORIGIN` | no | Only needed if the web app is served from a different origin |
+| `EMAIL_PROVIDER`, `EMAIL_FROM`, `SMTP_*` | for password reset | `smtp` plus your provider's settings; see [EMAIL.md](EMAIL.md) |
+| `PASSWORD_RESET_TTL_MIN`, `PASSWORD_RESET_MAX_PER_HOUR` | no | Defaults 60 minutes and 3 emails per account per hour |
 | `AI_PROVIDER`, `ANTHROPIC_API_KEY` | no | Leave `AI_PROVIDER=none` for the offline tutor |
 | `UPLOAD_DIR` | no | Defaults to `/app/server/uploads` in the image |
 
 ## Before inviting real learners
 
-- **Password reset email is not connected yet.** In production the server logs that a reset
-  email could not be delivered and never logs the link or token. Learners cannot reset their own
-  passwords until an email provider is added.
+- **Connect an email provider.** Without `EMAIL_PROVIDER=smtp` and its settings, reset emails are
+  not sent in production (the link or token is never logged), and Admin → Email shows "not
+  configured". Follow [EMAIL.md](EMAIL.md), then send a test email from Admin → Email.
 - **Uploaded diagrams** are stored on the container's disk. Attach a persistent disk or volume at
   `/app/server/uploads`, or they are lost when the container is replaced.
 - **Backups:** turn on your database provider's automatic backups. The README covers `pg_dump`.
-- **Content:** the bank has 65 original practice questions and no authentic CAT PYQs, and the
-  seeded exam pattern is marked unverified.
+- **Content:** the bank has 65 original practice questions and no verified CAT PYQs
+  ([PYQ-SOURCES.md](PYQ-SOURCES.md)), and the seeded CAT 2024 exam pattern is unverified
+  ([EXAM-PATTERN.md](EXAM-PATTERN.md)).
+- **Upgrading an existing deployment:** migration 003 runs on start. Any question already stored
+  as an authentic PYQ is unpublished and sent to the review queue, because approval now also
+  checks its answer key. Learner data is not changed.
